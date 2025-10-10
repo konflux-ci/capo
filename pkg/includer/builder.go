@@ -1,31 +1,31 @@
-package capo
+package includer
 
-import (
-	"strings"
-)
+import "strings"
 
 // TODO: implement pattern matching for all CopyMask users
 // https://docs.docker.com/reference/dockerfile/#pattern-matching
 
-// The CopyMask struct exposes methods to verify if a certain file or directory
+// FIXME: clean up the variable names in this file
+
+// The BuilderIncluder struct exposes methods to verify if a certain file or directory
 // in a container layer should be included in an SBOM or not.
 // Paths are only included if they're 'reachable' from the final stage of the build.
 // This mechanism makes sure that we only syft scan content that will be present in the final built image.
-type CopyMask struct {
+type BuilderIncluder struct {
 	sources []string
 }
 
 // Container for mapping builders to their copy masks.
-type CopyMasks struct {
-	aliasToMask map[string]CopyMask
+type BuilderIncluders struct {
+	aliasToMask map[string]BuilderIncluder
 }
 
 // Returns a CopyMask specific to the passed builder.
 // If a mask for a builder is not found, returns a CopyMask that includes no content.
-func (masks CopyMasks) GetMask(builder Builder) CopyMask {
-	mask, exists := masks.aliasToMask[builder.Alias]
+func (masks BuilderIncluders) GetMask(data StageData) BuilderIncluder {
+	mask, exists := masks.aliasToMask[data.Alias()]
 	if !exists {
-		return CopyMask{sources: []string{}}
+		return BuilderIncluder{sources: []string{}}
 	}
 	return mask
 }
@@ -38,24 +38,24 @@ func (masks CopyMasks) GetMask(builder Builder) CopyMask {
 // There is an edge between two nodes if the child node's destination
 // path is a subpath of the parent node's source paths, i.e. the parent
 // COPY command copies from the destination of the child's COPY.
-func NewCopyMasks(builders []Builder) CopyMasks {
-	if len(builders) == 0 {
-		return CopyMasks{
-			make(map[string]CopyMask),
+func NewBuilderIncluders(data []StageData) BuilderIncluders {
+	if len(data) == 0 {
+		return BuilderIncluders{
+			make(map[string]BuilderIncluder),
 		}
 	}
 
 	graphs := make([]copyNode, 0)
-	for i, bldr := range builders {
-		for _, cp := range bldr.Copies {
+	for i, d := range data {
+		for _, cp := range d.Copies() {
 			if cp.IsFromFinalStage() {
 				root := copyNode{
-					builder:  bldr.Alias,
-					source:   cp.Source,
-					dest:     cp.Dest,
+					builder:  d.Alias(),
+					source:   cp.Sources(),
+					dest:     cp.Destination(),
 					children: make([]copyNode, 0),
 				}
-				buildDependencyTree(&root, builders, i)
+				buildDependencyTree(&root, data, i)
 				graphs = append(graphs, root)
 			}
 		}
@@ -66,22 +66,22 @@ func NewCopyMasks(builders []Builder) CopyMasks {
 		collectCopies(tree, mask)
 	}
 
-	aliasToMask := make(map[string]CopyMask)
+	aliasToMask := make(map[string]BuilderIncluder)
 	for alias, sources := range mask {
-		aliasToMask[alias] = CopyMask{sources: sources}
+		aliasToMask[alias] = BuilderIncluder{sources: sources}
 	}
 
-	return CopyMasks{aliasToMask: aliasToMask}
+	return BuilderIncluders{aliasToMask: aliasToMask}
 }
 
 // Returns true if a path should be included in syft scanned content.
 // Paths are only included if they're 'reachable' from the final stage of the build.
 // Transparently handles '/' prefixes of the specified path.
-func (mask CopyMask) Includes(path string) bool {
+func (inc BuilderIncluder) Includes(path string) bool {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	for _, src := range mask.sources {
+	for _, src := range inc.sources {
 		if strings.HasPrefix(path, src) {
 			return true
 		}
@@ -92,8 +92,8 @@ func (mask CopyMask) Includes(path string) bool {
 
 // Returns a slice of paths whose subpaths (including the path itself)
 // should be included in syft scanned content.
-func (mask CopyMask) GetSources() []string {
-	return mask.sources
+func (inc BuilderIncluder) GetSources() []string {
+	return inc.sources
 }
 
 type copyNode struct {
@@ -108,19 +108,19 @@ type copyNode struct {
 // creating edges beween the nodes if the child node's destination
 // path is a subpath of the parent node's source paths, i.e. the parent
 // COPY command copies from the destination of the child's COPY.
-func buildDependencyTree(node *copyNode, builders []Builder, currentBuilderIndex int) {
+func buildDependencyTree(node *copyNode, data []StageData, currentBuilderIndex int) {
 	for _, srcPath := range node.source {
 		for i := range currentBuilderIndex {
-			bldr := builders[i]
-			for _, copy := range bldr.Copies {
-				if strings.HasPrefix(copy.Dest, srcPath) {
+			d := data[i]
+			for _, copy := range d.Copies() {
+				if strings.HasPrefix(copy.Destination(), srcPath) {
 					child := copyNode{
-						builder:  bldr.Alias,
-						source:   copy.Source,
-						dest:     copy.Dest,
+						builder:  d.Alias(),
+						source:   copy.Sources(),
+						dest:     copy.Destination(),
 						children: make([]copyNode, 0),
 					}
-					buildDependencyTree(&child, builders, i)
+					buildDependencyTree(&child, data, i)
 					node.children = append(node.children, child)
 				}
 			}
