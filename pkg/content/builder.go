@@ -1,11 +1,12 @@
 package content
 
 import (
-	"go.podman.io/storage"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
+
+	"go.podman.io/storage"
 )
 
 // Stores builder content for the specified image to the contentPath directory.
@@ -16,36 +17,43 @@ func GetBuilderContent(
 	builderImage *storage.Image,
 	includer Includer,
 	contentPath string,
-) ([]string, error) {
+) (included []string, err error) {
 	mountPath, err := store.MountImage(builderImage.ID, []string{}, "")
 	if err != nil {
-		return []string{}, err
+		return included, err
 	}
 	defer store.UnmountImage(builderImage.ID, false)
 
 	sources := includer.GetSources()
 	for _, src := range sources {
 		full := path.Join(mountPath, src)
+
 		fInfo, err := os.Stat(full)
-		if err != nil {
-			return []string{}, err
+		if os.IsNotExist(err) {
+			// If the file doesn't exist, it's likely intermediate content.
+			// We ignore it and continue looking for builder content.
+			continue
+		} else if err != nil {
+			return included, err
 		}
+
 		dest := path.Join(contentPath, src)
 
 		if fInfo.IsDir() {
 			// CopyFS also copies and follows symlinks even if they're outside the specified source,
 			// This is not a problem for us because Syft ignores symbolic links.
 			if err := os.CopyFS(contentPath, os.DirFS(full)); err != nil {
-				return []string{}, err
+				return included, err
 			}
 		} else if fInfo.Mode().IsRegular() {
 			if err := copyFile(full, dest); err != nil {
-				return []string{}, err
+				return included, err
 			}
 		}
+		included = append(included, src)
 	}
 
-	return sources, err
+	return included, err
 }
 
 func copyFile(src string, dest string) error {
