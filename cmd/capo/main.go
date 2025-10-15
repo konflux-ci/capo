@@ -31,32 +31,34 @@ func setupStore() storage.Store {
 
 func main() {
 	input := capo.ParsedContainerfile{
-		Builders: []includer.StageData{},
-		Externals: []includer.StageData{
+		BuilderStages: []includer.StageData{},
+		ExternalStages: []includer.StageData{
 			capo.NewStage(
 				"",
 				"quay.io/konflux-ci/oras:41b74d6",
 				[]includer.Copier{
-					capo.Copy{
-						Source: []string{"/usr/bin/oras"},
-						Dest:   "/bin/oras",
-						Stage:  capo.FinalStage,
-					},
+					capo.NewCopy(
+						[]string{"/usr/bin/oras"},
+						"/bin/oras",
+						capo.FinalStage,
+					),
 				},
 			),
 		},
 	}
 
 	store := setupStore()
-	builderIncluders := includer.NewBuilderIncluders(input.Builders)
+
+	// scan builder and intermediate content
+	builderIncluders := includer.NewBuilderIncluders(input.BuilderStages)
 	log.Printf("Parsed builder includers: %+v", builderIncluders)
 
-	builderData := make([]capo.BuilderImage, 0)
+	builderData := make([]capo.BuilderScanResult, 0)
 	output := "./output"
-	for _, builder := range input.Builders {
-		inc := builderIncluders.GetMask(builder)
+	for _, builder := range input.BuilderStages {
+		inc := builderIncluders.GetIncluderForAlias(builder.Alias())
 
-		data, err := capo.ScanBuilder(store, output, builder, inc)
+		data, err := capo.ScanBuilder(store, builder, inc, output)
 		if err != nil {
 			log.Fatalf("Failed to scan builder %+v with error: %v.", builder, err)
 		}
@@ -65,12 +67,12 @@ func main() {
 	}
 
 	// scan external image content in final stage
-	externalData := make([]capo.ExternalImage, 0)
-	for _, external := range input.Externals {
+	externalData := make([]capo.ExternalScanResult, 0)
+	for _, external := range input.ExternalStages {
 		inc := includer.External(external)
 		log.Printf("Parsed external includer for %s: %+v", external.Pullspec(), inc)
 
-		data, err := capo.ScanExternal(store, external, output, inc)
+		data, err := capo.ScanExternal(store, external, inc, output)
 		if err != nil {
 			log.Fatalf("Failed to scan external image %+v with error: %v.", external, err)
 		}

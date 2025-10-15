@@ -12,17 +12,17 @@ const FinalStage string = ""
 // TODO: create a pair of Containerfile and the resulting data structure as an example
 
 // ParsedContainerfile is a representation of COPY-ies from builder and external images.
-// Parsed from the output of the dockerfile-json tool.
+// Currently parsed from the output of the dockerfile-json tool.
 type ParsedContainerfile struct {
-	Builders  []includer.StageData
-	Externals []includer.StageData
+	BuilderStages  []includer.StageData
+	ExternalStages []includer.StageData
 }
 
 // Stage can represent a named builder stage (AS <alias>) or an
 // "external" stage in the Containerfile.
 // The external stage does not have an equivalent in the Containerfile,
 // but we can treat all copies from an external image as a virtual stage for simplicity.
-type Stage struct {
+type stage struct {
 	pullspec string
 	alias    string
 	// Slice of copies from this builder image.
@@ -31,54 +31,64 @@ type Stage struct {
 }
 
 func NewStage(alias string, pullspec string, copies []includer.Copier) includer.StageData {
-	return Stage{
+	return stage{
 		alias:    alias,
 		pullspec: pullspec,
 		copies:   copies,
 	}
 }
 
-func (b Stage) Alias() string {
-	return b.alias
+func (s stage) Alias() string {
+	return s.alias
 }
 
-func (b Stage) Pullspec() string {
-	return b.pullspec
+func (s stage) Pullspec() string {
+	return s.pullspec
 }
 
-func (b Stage) Copies() []includer.Copier {
-	return b.copies
+func (s stage) Copies() []includer.Copier {
+	return s.copies
 }
 
-// Copy represents a COPY command, excepting copies from context (only external image and builder copies).
-type Copy struct {
-	Source []string
-	Dest   string
-	// Alias of the builder stage this COPY is found in or FinalStage if copying from final
-	Stage string
+// Represents a COPY command, excepting copies from context (only external image and builder copies).
+type copy struct {
+	// sources of the COPY command
+	sources     []string
+	// destination of the COPY command
+	destination string
+	// Alias of the builder stage this COPY is found in
+	// or FinalStage if copying in final stage
+	stage string
 }
 
-func (c Copy) Sources() []string {
-	return c.Source
+func NewCopy(sources []string, destination string, stage string) includer.Copier {
+	return copy{
+		sources:     sources,
+		destination: destination,
+		stage:       stage,
+	}
 }
 
-func (c Copy) Destination() string {
-	return c.Dest
+func (c copy) Sources() []string {
+	return c.sources
 }
 
-func (c Copy) IsFromFinalStage() bool {
-	return c.Stage == FinalStage
+func (c copy) Destination() string {
+	return c.destination
+}
+
+func (c copy) IsFromFinalStage() bool {
+	return c.stage == FinalStage
 }
 
 // The Index contains paths to partial SBOMs and metadata
 // needed for contextualization by Mobster.
 type Index struct {
-	Builder  []BuilderImage  `json:"builder"`
-	External []ExternalImage `json:"external"`
+	Builder  []BuilderScanResult  `json:"builder"`
+	External []ExternalScanResult `json:"external"`
 }
 
-// FIXME: this of better names for these result structs
-type BuilderImage struct {
+type BuilderScanResult struct {
 	Pullspec string `json:"pullspec"`
 	// absolute path to the partial intermediate layer SBOM for this image
 	// if it's not present or is empty, the image doesn't have any intermediate layer
@@ -87,7 +97,7 @@ type BuilderImage struct {
 	BuilderSBOM string `json:"builder_sbom"`
 }
 
-type ExternalImage struct {
+type ExternalScanResult struct {
 	Pullspec string `json:"pullspec"`
 	// absolute path to the partial SBOM for external content from this image
 	SBOM string `json:"sbom"`
