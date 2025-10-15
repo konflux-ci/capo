@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"regexp"
 
 	"capo/internal/sbom"
 	"capo/pkg/content"
@@ -25,35 +26,42 @@ Example paths: (output/builder/builder.alias/builder.json and output/builder/bui
 
 Users should use the paths in the returned struct to access the SBOMs.
 */
-func Scan(store storage.Store, output string, builderStage includer.StageData, includer includer.Includer) (BuilderImage, error) {
+func ScanBuilder(
+	store storage.Store,
+	output string,
+	builderStage includer.StageData,
+	includer includer.Includer,
+) (BuilderImage, error) {
 	dest := path.Join(output, "builder", builderStage.Alias())
 	if err := os.MkdirAll(dest, 0755); err != nil {
 		return BuilderImage{}, err
 	}
 
-	tmpDir, err := os.MkdirTemp("", "")
+	builderContentPath, err := os.MkdirTemp("", "")
 	if err != nil {
 		return BuilderImage{}, err
 	}
-	defer os.RemoveAll(tmpDir)
+	defer os.RemoveAll(builderContentPath)
+	intermediateContentPath, err := os.MkdirTemp("", "")
+	if err != nil {
+		return BuilderImage{}, err
+	}
+	defer os.RemoveAll(builderContentPath)
 
-	cnt, err := content.GetContent(store, builderStage.Pullspec(), includer, tmpDir)
+	err = content.GetBuilderContent(store, builderStage.Pullspec(), includer, builderContentPath, intermediateContentPath)
 	if err != nil {
 		return BuilderImage{}, err
 	}
 
-	iSbomPath := ""
-	if cnt.IntermediatePath != "" {
-		log.Printf("Builder \"%s\" intermediate diff path: %s", builderStage.Alias(), cnt.IntermediatePath)
-		iSbomPath = path.Join(dest, "intermediate.json")
-		if err := sbom.SyftScan(cnt.IntermediatePath, iSbomPath); err != nil {
-			return BuilderImage{}, err
-		}
+	log.Printf("Builder \"%s\" intermediate diff path: %s", builderStage.Alias(), intermediateContentPath)
+	iSbomPath := path.Join(dest, "intermediate.json")
+	if err := sbom.SyftScan(intermediateContentPath, iSbomPath); err != nil {
+		return BuilderImage{}, err
 	}
 
 	bSbomPath := path.Join(dest, "builder.json")
-	log.Printf("Builder \"%s\" content path: %s", builderStage.Alias(), cnt.BuilderPath)
-	if err := sbom.SyftScan(cnt.BuilderPath, bSbomPath); err != nil {
+	log.Printf("Builder \"%s\" content path: %s", builderStage.Alias(), builderContentPath)
+	if err := sbom.SyftScan(builderContentPath, bSbomPath); err != nil {
 		return BuilderImage{}, err
 	}
 
@@ -62,4 +70,52 @@ func Scan(store storage.Store, output string, builderStage includer.StageData, i
 		IntermediateSBOM: iSbomPath,
 		BuilderSBOM:      bSbomPath,
 	}, nil
+}
+
+func ScanExternal(
+	store storage.Store,
+	external includer.StageData,
+	output string,
+	includer includer.Includer,
+) (ExternalImage, error) {
+	// TODO: SBOMs should probably be named with sanitized pullspecs in the external/ dir
+	dest := path.Join(output, "external")
+	if err := os.MkdirAll(dest, 0755); err != nil {
+		return ExternalImage{}, err
+	}
+
+	externalContentPath, err := os.MkdirTemp("", "")
+	if err != nil {
+		return ExternalImage{}, err
+	}
+	defer os.RemoveAll(externalContentPath)
+
+	err = content.GetExternalContent(
+		store, external.Pullspec(), includer, externalContentPath,
+	)
+	if err != nil {
+		return ExternalImage{}, err
+	}
+
+	eSbomPath := path.Join(dest, sanitizePullspec(external.Pullspec())+".json")
+	log.Printf("External \"%s\" content path: %s", external.Pullspec(), externalContentPath)
+	if err := sbom.SyftScan(externalContentPath, eSbomPath); err != nil {
+		return ExternalImage{}, err
+	}
+
+	return ExternalImage{
+		Pullspec: external.Pullspec(),
+		SBOM:     eSbomPath,
+	}, nil
+}
+
+func sanitizePullspec(pullspec string) string {
+	// Replace invalid filesystem characters with underscores
+	invalidChars := regexp.MustCompile(`[/\\:*?"<>|]`)
+	result := invalidChars.ReplaceAllString(pullspec, "_")
+
+	// Replace consecutive underscores with single underscore
+	result = regexp.MustCompile(`_+`).ReplaceAllString(result, "_")
+
+	return result
 }

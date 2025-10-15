@@ -9,13 +9,13 @@ var _ = Describe("CopyMask", func() {
 	Describe("filtering", func() {
 		Context("with single builder with single copy", func() {
 			var masks CopyMasks
-			var builders []Builder
+			var builders []Stage
 
 			BeforeEach(func() {
-				builders = []Builder{
+				builders = []Stage{
 					{
 						Alias:    "builder",
-						Pullspec: "builder-image",
+						pullspec: "builder-image",
 						Copies: []Copy{
 							{Source: []string{"/app"}, Dest: "/usr/app", Stage: FinalStage},
 						},
@@ -44,20 +44,20 @@ var _ = Describe("CopyMask", func() {
 
 		Context("with transitive copy", func() {
 			var masks CopyMasks
-			var firstBuilder, secondBuilder Builder
+			var firstBuilder, secondBuilder Stage
 
 			BeforeEach(func() {
-				builders := []Builder{
+				builders := []Stage{
 					{
 						Alias:    "first",
-						Pullspec: "builder-image",
+						pullspec: "builder-image",
 						Copies: []Copy{
 							{Source: []string{"/app"}, Dest: "/usr/app", Stage: "second"},
 						},
 					},
 					{
 						Alias:    "second",
-						Pullspec: "builder-image",
+						pullspec: "builder-image",
 						Copies: []Copy{
 							{Source: []string{"/usr/app"}, Dest: "/usr/app", Stage: FinalStage},
 						},
@@ -89,13 +89,13 @@ var _ = Describe("CopyMask", func() {
 
 		Context("with transitive and final copy mix", func() {
 			var masks CopyMasks
-			var firstBuilder Builder
+			var firstBuilder Stage
 
 			BeforeEach(func() {
-				builders := []Builder{
+				builders := []Stage{
 					{
 						Alias:    "first",
-						Pullspec: "builder-image",
+						pullspec: "builder-image",
 						Copies: []Copy{
 							{Source: []string{"/app"}, Dest: "/usr/app", Stage: "second"},
 							{Source: []string{"/lib"}, Dest: "/app/lib", Stage: FinalStage},
@@ -103,7 +103,7 @@ var _ = Describe("CopyMask", func() {
 					},
 					{
 						Alias:    "second",
-						Pullspec: "builder-image",
+						pullspec: "builder-image",
 						Copies: []Copy{
 							{Source: []string{"/usr/app"}, Dest: "/usr/app", Stage: FinalStage},
 						},
@@ -123,13 +123,13 @@ var _ = Describe("CopyMask", func() {
 
 		Context("with root path as source", func() {
 			var masks CopyMasks
-			var testBuilder Builder
+			var testBuilder Stage
 
 			BeforeEach(func() {
-				builders := []Builder{
+				builders := []Stage{
 					{
 						Alias:    "test",
-						Pullspec: "test-image",
+						pullspec: "test-image",
 						Copies: []Copy{
 							{Source: []string{"/"}, Dest: "/copy"},
 						},
@@ -148,13 +148,13 @@ var _ = Describe("CopyMask", func() {
 
 		Context("when path exactly matches source", func() {
 			var masks CopyMasks
-			var testBuilder Builder
+			var testBuilder Stage
 
 			BeforeEach(func() {
-				builders := []Builder{
+				builders := []Stage{
 					{
 						Alias:    "test",
-						Pullspec: "test-image",
+						pullspec: "test-image",
 						Copies: []Copy{
 							{Source: []string{"/exact/path"}, Dest: "/dest"},
 						},
@@ -176,9 +176,9 @@ var _ = Describe("CopyMask", func() {
 var _ = Describe("NewCopyMasks", func() {
 	Context("when given empty builders slice", func() {
 		It("should return empty mask for any builder", func() {
-			result := NewCopyMasks([]Builder{})
+			result := NewCopyMasks([]Stage{})
 
-			dummyBuilder := Builder{Alias: "nonexistent"}
+			dummyBuilder := Stage{Alias: "nonexistent"}
 			mask := result.GetMask(dummyBuilder)
 			Expect(mask.GetSources()).To(HaveLen(0))
 		})
