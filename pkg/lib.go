@@ -53,7 +53,7 @@ func (s stage) Copies() []includer.Copier {
 // Represents a COPY command, excepting copies from context (only external image and builder copies).
 type copy struct {
 	// sources of the COPY command
-	sources     []string
+	sources []string
 	// destination of the COPY command
 	destination string
 	// Alias of the builder stage this COPY is found in
