@@ -22,8 +22,8 @@ type BuilderIncluders struct {
 
 // Returns a CopyMask specific to the passed builder.
 // If a mask for a builder is not found, returns a CopyMask that includes no content.
-func (masks BuilderIncluders) GetMask(data StageData) Includer {
-	mask, exists := masks.aliasToMask[data.Alias()]
+func (masks BuilderIncluders) GetIncluderForAlias(alias string) Includer {
+	mask, exists := masks.aliasToMask[alias]
 	if !exists {
 		return BuilderIncluder{sources: []string{}}
 	}
