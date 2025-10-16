@@ -109,7 +109,9 @@ func (i *Index) Write(output string) (string, error) {
 	if err != nil {
 		return iPath, err
 	}
+	defer f.Close()
 
 	encoder := json.NewEncoder(f)
+	encoder.SetIndent("", "  ")
 	return iPath, encoder.Encode(i)
 }
