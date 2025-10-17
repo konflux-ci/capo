@@ -4,7 +4,7 @@ type external struct {
 	sources []string
 }
 
-func External(data StageData) Includer {
+func External(data Stage) Includer {
 	sources := make([]string, 0)
 	for _, cp := range data.Copies() {
 		sources = append(sources, cp.Sources()...)

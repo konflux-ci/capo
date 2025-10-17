@@ -38,7 +38,7 @@ func (masks BuilderIncluders) GetIncluderForAlias(alias string) Includer {
 // There is an edge between two nodes if the child node's destination
 // path is a subpath of the parent node's source paths, i.e. the parent
 // COPY command copies from the destination of the child's COPY.
-func NewBuilderIncluders(data []StageData) BuilderIncluders {
+func NewBuilderIncluders(data []Stage) BuilderIncluders {
 	if len(data) == 0 {
 		return BuilderIncluders{
 			make(map[string]BuilderIncluder),
@@ -90,7 +90,7 @@ type copyNode struct {
 // creating edges beween the nodes if the child node's destination
 // path is a subpath of the parent node's source paths, i.e. the parent
 // COPY command copies from the destination of the child's COPY.
-func buildDependencyTree(node *copyNode, data []StageData, currentBuilderIndex int) {
+func buildDependencyTree(node *copyNode, data []Stage, currentBuilderIndex int) {
 	for _, srcPath := range node.source {
 		for i := range currentBuilderIndex {
 			d := data[i]
