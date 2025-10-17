@@ -2,7 +2,6 @@ package content
 
 import (
 	"archive/tar"
-	"capo/pkg/includer"
 	"io"
 	"os"
 	"path/filepath"
@@ -27,7 +26,7 @@ import (
 func GetIntermediateContent(
 	store storage.Store,
 	builderImage *storage.Image,
-	includer includer.Includer,
+	sources []string,
 	path string,
 ) ([]string, error) {
 	builderLayer, err := store.Layer(builderImage.TopLayer)
@@ -43,7 +42,7 @@ func GetIntermediateContent(
 		return []string{}, nil
 	}
 
-	included, err := saveDiff(store, path, interLayer.ID, builderLayer.ID, includer)
+	included, err := saveDiff(store, path, interLayer.ID, builderLayer.ID, sources)
 	if err != nil {
 		return []string{}, err
 	}
@@ -147,7 +146,7 @@ func saveDiff(
 	dest string,
 	layerId string,
 	parentId string,
-	includer includer.Includer,
+	sources []string,
 ) ([]string, error) {
 	compression := archive.Uncompressed
 	opts := storage.DiffOptions{
@@ -159,8 +158,6 @@ func saveDiff(
 		return []string{}, err
 	}
 	defer diff.Close()
-
-	sources := includer.Sources()
 
 	included := make([]string, 0, 16)
 	reader := tar.NewReader(diff)

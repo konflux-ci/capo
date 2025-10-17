@@ -5,7 +5,6 @@ and store partial content from the build, for later syft scanning.
 package content
 
 import (
-	"capo/pkg/includer"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +14,8 @@ import (
 	"strings"
 
 	"go.podman.io/storage"
+
+	"capo/pkg/stage"
 )
 
 // Uses the container store to returns a struct containing absolute paths to
@@ -30,57 +31,34 @@ import (
 // that use a builder image with the same pullspec, only one intermediate layer can be retrieved.
 // This is because it is currently impossible to differentiate between the two layers, a contribution
 // to buildah will be most likely required (such as storing the ids of the last layers/images in a stage).
-func GetBuilderContent(
+func GetContent(
 	store storage.Store,
-	pullspec string,
-	includer includer.Includer,
+	stage stage.Stage,
 	builderContentPath string,
 	intermediateContentPath string,
 ) error {
-	imgId, err := store.Lookup(pullspec)
+	imgId, err := store.Lookup(stage.Pullspec())
 	if err != nil {
-		return fmt.Errorf("Could not find image: %s in buildah storage.", pullspec)
+		return fmt.Errorf("Could not find image: %s in buildah storage.", stage.Pullspec())
 	}
 	img, _ := store.Image(imgId)
 
-	intermediate, err := GetIntermediateContent(store, img, includer, intermediateContentPath)
+	intermediate, err := GetIntermediateContent(store, img, stage.Sources(), intermediateContentPath)
 	if err != nil {
 		return err
 	}
 
 	if len(intermediate) == 0 {
-		log.Printf("Found no intermediate content for %s.", pullspec)
+		log.Printf("Found no intermediate content for %s.", stage.Pullspec())
 	} else {
-		log.Printf("Included intermediate content %+v for %s.", intermediate, pullspec)
+		log.Printf("Included intermediate content %+v for %s.", intermediate, stage.Pullspec())
 	}
 
-	builder, err := getImageContent(store, img, includer, builderContentPath)
+	builder, err := getImageContent(store, img, stage.Sources(), builderContentPath)
 	if err != nil {
 		return err
 	}
-	log.Printf("Included builder content %+v for %s.", builder, pullspec)
-
-	return nil
-}
-
-func GetExternalContent(
-	store storage.Store,
-	externalPullspec string,
-	includer includer.Includer,
-	contentPath string,
-) error {
-	externalImgId, err := store.Lookup(externalPullspec)
-	if err != nil {
-		return fmt.Errorf("Could not find image: %s in buildah storage.", externalPullspec)
-	}
-	externalImg, _ := store.Image(externalImgId)
-
-	external, err := getImageContent(store, externalImg, includer, contentPath)
-	if err != nil {
-		return err
-	}
-
-	log.Printf("Included external content %+v for %s.", external, externalPullspec)
+	log.Printf("Included builder content %+v for %s.", builder, stage.Pullspec())
 
 	return nil
 }
@@ -102,7 +80,7 @@ func includes(sources []string, path string) bool {
 func getImageContent(
 	store storage.Store,
 	image *storage.Image,
-	includer includer.Includer,
+	sources []string,
 	contentPath string,
 ) (included []string, err error) {
 	mountPath, err := store.MountImage(image.ID, []string{}, "")
@@ -111,7 +89,6 @@ func getImageContent(
 	}
 	defer store.UnmountImage(image.ID, false)
 
-	sources := includer.Sources()
 	for _, src := range sources {
 		full := path.Join(mountPath, src)
 
