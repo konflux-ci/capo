@@ -16,7 +16,7 @@ type Copier interface {
 	IsFromFinalStage() bool
 }
 
-type StageData interface {
+type Stage interface {
 	// Get the stage alias of this stage or empty string
 	// if the stage has no alias (such as in external copies).
 	Alias() string
