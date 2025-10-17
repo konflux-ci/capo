@@ -23,13 +23,13 @@ Only syft scans content that needs to be included based on the includer.
 Scans the content and stores the respective SBOMs directly to the output directory
 using sanitized pullspec names with suffixes. All paths are saved in the returned
 BuilderScanResult struct.
-Example filenames: docker.io_library_fedora_latest-builder.json and docker.io_library_fedora_latest-intermediate.json
 
-Users should use the paths in the returned struct to access the SBOMs.
+Example filenames: docker.io_library_fedora_latest-builder.json and
+docker.io_library_fedora_latest-intermediate.json
 */
 func ScanBuilder(
 	store storage.Store,
-	builderStage includer.StageData,
+	builderStage includer.Stage,
 	includer includer.Includer,
 	output string,
 ) (BuilderScanResult, error) {
@@ -42,6 +42,7 @@ func ScanBuilder(
 		return BuilderScanResult{}, err
 	}
 	defer os.RemoveAll(builderContentPath)
+
 	intermediateContentPath, err := os.MkdirTemp("", "")
 	if err != nil {
 		return BuilderScanResult{}, err
@@ -76,7 +77,7 @@ func ScanBuilder(
 
 func ScanExternal(
 	store storage.Store,
-	externalStage includer.StageData,
+	externalStage includer.Stage,
 	includer includer.Includer,
 	output string,
 ) (ExternalScanResult, error) {
