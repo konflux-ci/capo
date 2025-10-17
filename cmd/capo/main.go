@@ -6,7 +6,6 @@ import (
 	"capo/pkg"
 )
 
-
 func main() {
 	stages, err := capo.ParseContainerfile("")
 	if err != nil {
