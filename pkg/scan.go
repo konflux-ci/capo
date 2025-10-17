@@ -18,10 +18,10 @@ import (
 type StageScanResult struct {
 	Alias    string `json:"alias,omitempty"`
 	Pullspec string `json:"pullspec"`
-	// absolute path to the partial intermediate layer SBOM for this image
+	// path to the partial intermediate layer SBOM for this image
 	// if it's not present or is empty, the image doesn't have any intermediate layer
 	IntermediateSBOM string `json:"intermediate_sbom,omitempty"`
-	// absolute path to the partial builder layer SBOM for this image
+	// path to the partial builder layer SBOM for this image
 	BuilderSBOM string `json:"builder_sbom"`
 }
 
