@@ -1,13 +1,9 @@
 package capo
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
-	"path"
-	"regexp"
 
 	"capo/internal/sbom"
 
@@ -15,29 +11,29 @@ import (
 	"go.podman.io/storage/pkg/reexec"
 )
 
-type StageScanResult struct {
-	Alias    string `json:"alias,omitempty"`
+type PackageMetadata struct {
+	Packages []PackageMetadataItem `json:"packages"`
+}
+
+type PackageMetadataItem struct {
+	PackageURL string `json:"purl"`
+
+	// Slice of checksums, with checksum type prefixed (e.g. "sha256:deadbeef").
+	// Omitted if syft didn't provide any checksums.
+	Checksums []string `json:"checksums,omitempty"`
+
+	// PURL of the package that this package is a dependency of.
+	DependencyOfPURL string `json:"dependency_of_purl,omitempty"`
+
+	// Type of origin of this package, can be "builder" or "intermediate".
+	OriginType string `json:"origin_type"`
+
+	// Pullspec of the image which is this package's origin.
 	Pullspec string `json:"pullspec"`
-	// path to the partial intermediate layer SBOM for this image
-	// if it's not present or is empty, the image doesn't have any intermediate layer
-	IntermediateSBOM string `json:"intermediate_sbom,omitempty"`
-	// path to the partial builder layer SBOM for this image
-	BuilderSBOM string `json:"builder_sbom"`
-}
 
-type ScanResult struct {
-	Stages []StageScanResult `json:"stages"`
-}
-
-// Print the ScanResult to stdout as JSON
-func (sr ScanResult) Print() {
-	var buf bytes.Buffer
-
-	encoder := json.NewEncoder(&buf)
-	encoder.SetIndent("", "  ")
-	encoder.Encode(sr)
-
-	fmt.Println(buf.String())
+	// Alias of the stage of this package's origin.
+	// Omitted if this package is from an external image.
+	StageAlias string `json:"stage_alias,omitempty"`
 }
 
 func setupStore() (storage.Store, error) {
@@ -68,33 +64,25 @@ The paths in the ScanResult struct include the output directory as a prefix.
 */
 func Scan(
 	stages []Stage,
-	output string,
-) (ScanResult, error) {
+) (res PackageMetadata, err error) {
 	store, err := setupStore()
 	if err != nil {
-		return ScanResult{}, err
+		return PackageMetadata{}, err
 	}
 
-	if err := os.MkdirAll(output, 0755); err != nil {
-		return ScanResult{}, err
-	}
-
-	stageResults := make([]StageScanResult, 0)
 	for _, stage := range stages {
-		res, err := scanStage(store, stage, output)
+		stagePkgItems, err := scanStage(store, stage)
 		if err != nil {
-			return ScanResult{}, fmt.Errorf("Failed to scan stage %+v with error: %v.", stage, err)
+			return PackageMetadata{}, fmt.Errorf("Failed to scan stage %+v with error: %v.", stage, err)
 		}
 
-		stageResults = append(stageResults, res)
+		res.Packages = append(res.Packages, stagePkgItems...)
 	}
 
-	return ScanResult{
-		Stages: stageResults,
-	}, nil
+	return res, nil
 }
 
-func scanStage(store storage.Store, stage Stage, output string) (res StageScanResult, err error) {
+func scanStage(store storage.Store, stage Stage) (res []PackageMetadataItem, err error) {
 	builderContentPath, err := os.MkdirTemp("", "")
 	if err != nil {
 		return res, err
@@ -109,8 +97,8 @@ func scanStage(store storage.Store, stage Stage, output string) (res StageScanRe
 	// and don't remove the temporary directories
 	debugMode := os.Getenv("CAPO_DEBUG") != ""
 	if debugMode {
-		log.Printf("[DEBUG] Builder content path: %s", builderContentPath)
-		log.Printf("[DEBUG] Intermediate content path: %s", intermediateContentPath)
+		log.Printf("[DEBUG] Builder %s content path: %s", stage.Pullspec(), builderContentPath)
+		log.Printf("[DEBUG] Intermediate %s content path: %s", stage.Pullspec(), intermediateContentPath)
 	} else {
 		defer os.RemoveAll(builderContentPath)
 		defer os.RemoveAll(intermediateContentPath)
@@ -121,36 +109,45 @@ func scanStage(store storage.Store, stage Stage, output string) (res StageScanRe
 		return res, err
 	}
 
-	log.Printf("Builder \"%s\" intermediate diff path: %s", stage.Pullspec(), intermediateContentPath)
-	iSbomFilename := sanitizePullspec(stage.Pullspec()) + "-intermediate.json"
-	iSbomPath := path.Join(output, iSbomFilename)
-	if err := sbom.SyftScan(intermediateContentPath, iSbomPath); err != nil {
+	intermediatePkgs, err := sbom.SyftScan(intermediateContentPath)
+	if err != nil {
 		return res, err
 	}
 
-	bSbomFilename := sanitizePullspec(stage.Pullspec()) + "-builder.json"
-	bSbomPath := path.Join(output, bSbomFilename)
-	log.Printf("Builder \"%s\" content path: %s", stage.Pullspec(), builderContentPath)
-	if err := sbom.SyftScan(builderContentPath, bSbomPath); err != nil {
+	builderPkgs, err := sbom.SyftScan(builderContentPath)
+	if err != nil {
 		return res, err
 	}
 
-	return StageScanResult{
-		Alias:            stage.Alias(),
-		Pullspec:         stage.Pullspec(),
-		IntermediateSBOM: iSbomPath,
-		BuilderSBOM:      bSbomPath,
-	}, nil
+	return getPackageMetadata(stage, builderPkgs, intermediatePkgs), nil
 }
 
-// Sanitize a pullspec so it can be used as a file path
-func sanitizePullspec(pullspec string) string {
-	// replace invalid filesystem characters with underscores
-	invalidChars := regexp.MustCompile(`[/\\:*?"<>|]`)
-	result := invalidChars.ReplaceAllString(pullspec, "_")
+func getPackageMetadata(
+	stage Stage,
+	builderPkgs []sbom.SyftPackage,
+	intermediatePkgs []sbom.SyftPackage,
+) (res []PackageMetadataItem) {
+	for _, bpkg := range builderPkgs {
+		res = append(res, PackageMetadataItem{
+			Pullspec:         stage.Pullspec(),
+			StageAlias:       stage.Alias(),
+			PackageURL:       bpkg.PURL,
+			DependencyOfPURL: bpkg.DependencyOfPURL,
+			Checksums:        bpkg.Checksums,
+			OriginType:       "builder",
+		})
+	}
 
-	// replace consecutive underscores with single underscore
-	result = regexp.MustCompile(`_+`).ReplaceAllString(result, "_")
+	for _, ipkg := range intermediatePkgs {
+		res = append(res, PackageMetadataItem{
+			Pullspec:         stage.Pullspec(),
+			StageAlias:       stage.Alias(),
+			PackageURL:       ipkg.PURL,
+			DependencyOfPURL: ipkg.DependencyOfPURL,
+			Checksums:        ipkg.Checksums,
+			OriginType:       "intermediate",
+		})
+	}
 
-	return result
+	return res
 }

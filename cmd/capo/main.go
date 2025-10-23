@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"log"
 
 	"capo/pkg"
@@ -13,12 +16,20 @@ func main() {
 	}
 	log.Printf("Parsed stages: %+v", stages)
 
-	output := "./output"
-
-	result, err := capo.Scan(stages, output)
+	pkgMetadata, err := capo.Scan(stages)
 	if err != nil {
 		log.Fatalf("Failed to scan stages: %+v", err)
 	}
 
-	result.Print()
+	printPkgMetadata(pkgMetadata)
+}
+
+func printPkgMetadata(pkgMetadata capo.PackageMetadata) {
+	var buf bytes.Buffer
+
+	encoder := json.NewEncoder(&buf)
+	encoder.SetIndent("", "  ")
+	encoder.Encode(pkgMetadata)
+
+	fmt.Println(buf.String())
 }
