@@ -22,7 +22,7 @@ type BuilderIncluders struct {
 
 // Returns a CopyMask specific to the passed builder.
 // If a mask for a builder is not found, returns a CopyMask that includes no content.
-func (masks BuilderIncluders) GetMask(data StageData) Includer {
+func (masks BuilderIncluders) GetMask(data StageData) BuilderIncluder {
 	mask, exists := masks.aliasToMask[data.Alias()]
 	if !exists {
 		return BuilderIncluder{sources: []string{}}
@@ -74,7 +74,25 @@ func NewBuilderIncluders(data []StageData) BuilderIncluders {
 	return BuilderIncluders{aliasToMask: aliasToMask}
 }
 
-func (inc BuilderIncluder) Sources() []string {
+// Returns true if a path should be included in syft scanned content.
+// Paths are only included if they're 'reachable' from the final stage of the build.
+// Transparently handles '/' prefixes of the specified path.
+func (inc BuilderIncluder) Includes(path string) bool {
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	for _, src := range inc.sources {
+		if strings.HasPrefix(path, src) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Returns a slice of paths whose subpaths (including the path itself)
+// should be included in syft scanned content.
+func (inc BuilderIncluder) GetSources() []string {
 	return inc.sources
 }
 

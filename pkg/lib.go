@@ -11,43 +11,43 @@ const FinalStage string = ""
 
 // TODO: create a pair of Containerfile and the resulting data structure as an example
 
-// ParsedContainerfile is a representation of COPY-ies from builder and external images.
+// BuildData is a representation of COPY-ies from builder and external images.
 // Parsed from the output of the dockerfile-json tool.
-type ParsedContainerfile struct {
+type BuildData struct {
 	Builders  []includer.StageData
 	Externals []includer.StageData
 }
 
-// Stage can represent a named builder stage (AS <alias>) or an
-// "external" stage in the Containerfile.
-// The external stage does not have an equivalent in the Containerfile,
-// but we can treat all copies from an external image as a virtual stage for simplicity.
-type Stage struct {
-	pullspec string
-	alias    string
+// Builder represents a named stage (AS <alias>) in the Containerfile.
+type Builder struct {
+	// StagePullspec of the builder image.
+	StagePullspec string
+	// Alias of the builder stage.
+	StageAlias string
 	// Slice of copies from this builder image.
 	// NOT the copies in this builder stage
-	copies []includer.Copier
+	StageCopies []includer.Copier
 }
 
-func NewStage(alias string, pullspec string, copies []includer.Copier) includer.StageData {
-	return Stage{
-		alias:    alias,
-		pullspec: pullspec,
-		copies:   copies,
-	}
+func (b Builder) Alias() string {
+	return b.StageAlias
 }
 
-func (b Stage) Alias() string {
-	return b.alias
+func (b Builder) Pullspec() string {
+	return b.StagePullspec
 }
 
-func (b Stage) Pullspec() string {
-	return b.pullspec
+func (b Builder) Copies() []includer.Copier {
+	return b.StageCopies
 }
 
-func (b Stage) Copies() []includer.Copier {
-	return b.copies
+// External represents an external image that is copied FROM in the Containerfile.
+// E.g. "COPY --from=quay.io/konflux-ci/mobster:123 src/ dest/"
+type External struct {
+	// Pullspec of the external image.
+	Pullspec string
+	// Slice of copies from this external image.
+	Copies []Copy
 }
 
 // Copy represents a COPY command, excepting copies from context (only external image and builder copies).
@@ -71,7 +71,7 @@ func (c Copy) IsFromFinalStage() bool {
 }
 
 // The Index contains paths to partial SBOMs and metadata
-// needed for contextualization by Mobster.
+// needed for contextualizatio by Mobster
 type Index struct {
 	Builder  []BuilderImage  `json:"builder"`
 	External []ExternalImage `json:"external"`

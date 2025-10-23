@@ -1,8 +1,14 @@
 package includer
 
+// FIXME: extend the documentation in this file
+
 type Includer interface {
-	// Returns a slice of paths to content in the layer/image which should be syft-scanned.
-	Sources() []string
+	// Returns true if content in the specified path should be included.
+	Includes(path string) bool
+
+	// Returns a slice of strings of paths whose content (including subpaths) should be included.
+	// Used to filter builder content more effectively.
+	GetSources() []string
 }
 
 type Copier interface {

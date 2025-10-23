@@ -30,20 +30,24 @@ func setupStore() storage.Store {
 }
 
 func main() {
-	input := capo.ParsedContainerfile{
-		Builders: []includer.StageData{},
-		Externals: []includer.StageData{
-			capo.NewStage(
-				"",
-				"quay.io/konflux-ci/oras:41b74d6",
-				[]includer.Copier{
+	input := capo.BuildData{
+		Builders: []includer.StageData{
+			capo.Builder{
+				StagePullspec: "quay.io/konflux-ci/oras:41b74d6",
+				StageAlias:    "builder1",
+				StageCopies: []includer.Copier{
+					capo.Copy{
+						Source: []string{"/content"},
+						Dest:   "/content",
+						Stage:  capo.FinalStage,
+					},
 					capo.Copy{
 						Source: []string{"/usr/bin/oras"},
-						Dest:   "/bin/oras",
+						Dest:   "/usr/bin/oras",
 						Stage:  capo.FinalStage,
 					},
 				},
-			),
+			},
 		},
 	}
 
@@ -54,34 +58,16 @@ func main() {
 	builderData := make([]capo.BuilderImage, 0)
 	output := "./output"
 	for _, builder := range input.Builders {
-		inc := builderIncluders.GetMask(builder)
-
-		data, err := capo.ScanBuilder(store, output, builder, inc)
+		copyMask := builderIncluders.GetMask(builder)
+		data, err := capo.Scan(store, output, builder, copyMask)
 		if err != nil {
 			log.Fatalf("Failed to scan builder %+v with error: %v.", builder, err)
 		}
-
 		builderData = append(builderData, data)
 	}
 
-	// scan external image content in final stage
-	externalData := make([]capo.ExternalImage, 0)
-	for _, external := range input.Externals {
-		inc := includer.External(external)
-		log.Printf("Parsed external includer for %s: %+v", external.Pullspec(), inc)
-
-		data, err := capo.ScanExternal(store, external, output, inc)
-		if err != nil {
-			log.Fatalf("Failed to scan external image %+v with error: %v.", external, err)
-		}
-
-		externalData = append(externalData, data)
-	}
-
-	// build and write the index
 	index := capo.Index{
-		Builder:  builderData,
-		External: externalData,
+		Builder: builderData,
 	}
 	iPath, err := index.Write(output)
 	if err != nil {
