@@ -31,7 +31,7 @@ func setupStore() storage.Store {
 
 func main() {
 	input := capo.ParsedContainerfile{
-		BuilderStages: []includer.Stage{
+		BuilderStages: []includer.StageData{
 			capo.NewStage(
 				"fedora-builder",
 				"docker.io/library/fedora:latest",
@@ -55,7 +55,7 @@ func main() {
 				},
 			),
 		},
-		ExternalStages: []includer.Stage{
+		ExternalStages: []includer.StageData{
 			capo.NewStage(
 				"",
 				"quay.io/konflux-ci/oras:41b74d6",

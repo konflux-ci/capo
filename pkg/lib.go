@@ -9,11 +9,13 @@ import (
 
 const FinalStage string = ""
 
+// TODO: create a pair of Containerfile and the resulting data structure as an example
+
 // ParsedContainerfile is a representation of COPY-ies from builder and external images.
 // Currently parsed from the output of the dockerfile-json tool.
 type ParsedContainerfile struct {
-	BuilderStages  []includer.Stage
-	ExternalStages []includer.Stage
+	BuilderStages  []includer.StageData
+	ExternalStages []includer.StageData
 }
 
 // Stage can represent a named builder stage (AS <alias>) or an
@@ -28,7 +30,7 @@ type stage struct {
 	copies []includer.Copier
 }
 
-func NewStage(alias string, pullspec string, copies []includer.Copier) includer.Stage {
+func NewStage(alias string, pullspec string, copies []includer.Copier) includer.StageData {
 	return stage{
 		alias:    alias,
 		pullspec: pullspec,
