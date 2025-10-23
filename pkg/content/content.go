@@ -80,9 +80,6 @@ func GetContent(store storage.Store, pullspec string, includer Includer, path st
 		return content, err
 	}
 	builder, err := GetBuilderContent(store, img, includer, content.BuilderPath)
-	if err != nil {
-		return content, err
-	}
 	log.Printf("Included builder content %+v for %s.", builder, pullspec)
 
 	return content, nil
