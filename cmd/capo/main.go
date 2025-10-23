@@ -4,8 +4,6 @@ import (
 	"log"
 
 	"capo/pkg"
-	"capo/pkg/includer"
-
 	"go.podman.io/storage"
 	"go.podman.io/storage/pkg/reexec"
 )
@@ -31,19 +29,25 @@ func setupStore() storage.Store {
 
 func main() {
 	input := capo.BuildData{
-		Builders: []includer.StageData{
-			capo.Builder{
-				StagePullspec: "quay.io/konflux-ci/oras:41b74d6",
-				StageAlias:    "builder1",
-				StageCopies: []includer.Copier{
-					capo.Copy{
+		Builders: []capo.Builder{
+			{
+				Pullspec: "quay.io/konflux-ci/oras:41b74d6",
+				Alias:    "builder1",
+				Copies: []capo.Copy{
+					{
 						Source: []string{"/content"},
-						Dest:   "/content",
+						Dest:   ".",
 						Stage:  capo.FinalStage,
 					},
-					capo.Copy{
-						Source: []string{"/usr/bin/oras"},
-						Dest:   "/usr/bin/oras",
+				},
+			},
+			{
+				Pullspec: "quay.io/konflux-ci/oras:41b74d6",
+				Alias:    "builder2",
+				Copies: []capo.Copy{
+					{
+						Source: []string{"/more_content"},
+						Dest:   ".",
 						Stage:  capo.FinalStage,
 					},
 				},
@@ -52,13 +56,13 @@ func main() {
 	}
 
 	store := setupStore()
-	builderIncluders := includer.NewBuilderIncluders(input.Builders)
-	log.Printf("Parsed builder includers: %+v", builderIncluders)
+	masks := capo.NewCopyMasks(input.Builders)
+	log.Printf("Parsed copy masks: %+v", masks)
 
 	builderData := make([]capo.BuilderImage, 0)
 	output := "./output"
 	for _, builder := range input.Builders {
-		copyMask := builderIncluders.GetMask(builder)
+		copyMask := masks.GetMask(builder)
 		data, err := capo.Scan(store, output, builder, copyMask)
 		if err != nil {
 			log.Fatalf("Failed to scan builder %+v with error: %v.", builder, err)

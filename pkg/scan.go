@@ -7,7 +7,6 @@ import (
 
 	"capo/internal/sbom"
 	"capo/pkg/content"
-	"capo/pkg/includer"
 
 	"go.podman.io/storage"
 )
@@ -25,8 +24,8 @@ Example paths: (output/builder/builder.alias/builder.json and output/builder/bui
 
 Users should use the paths in the returned struct to access the SBOMs.
 */
-func Scan(store storage.Store, output string, builderStage includer.StageData, includer includer.Includer) (BuilderImage, error) {
-	dest := path.Join(output, "builder", builderStage.Alias())
+func Scan(store storage.Store, output string, builder Builder, copyMask CopyMask) (BuilderImage, error) {
+	dest := path.Join(output, "builder", builder.Alias)
 	if err := os.MkdirAll(dest, 0755); err != nil {
 		return BuilderImage{}, err
 	}
@@ -37,14 +36,14 @@ func Scan(store storage.Store, output string, builderStage includer.StageData, i
 	}
 	defer os.RemoveAll(tmpDir)
 
-	cnt, err := content.GetContent(store, builderStage.Pullspec(), includer, tmpDir)
+	cnt, err := content.GetContent(store, builder.Pullspec, copyMask, tmpDir)
 	if err != nil {
 		return BuilderImage{}, err
 	}
 
 	iSbomPath := ""
 	if cnt.IntermediatePath != "" {
-		log.Printf("Builder \"%s\" intermediate diff path: %s", builderStage.Alias(), cnt.IntermediatePath)
+		log.Printf("Builder \"%s\" intermediate diff path: %s", builder.Alias, cnt.IntermediatePath)
 		iSbomPath = path.Join(dest, "intermediate.json")
 		if err := sbom.SyftScan(cnt.IntermediatePath, iSbomPath); err != nil {
 			return BuilderImage{}, err
@@ -52,13 +51,13 @@ func Scan(store storage.Store, output string, builderStage includer.StageData, i
 	}
 
 	bSbomPath := path.Join(dest, "builder.json")
-	log.Printf("Builder \"%s\" content path: %s", builderStage.Alias(), cnt.BuilderPath)
+	log.Printf("Builder \"%s\" content path: %s", builder.Alias, cnt.BuilderPath)
 	if err := sbom.SyftScan(cnt.BuilderPath, bSbomPath); err != nil {
 		return BuilderImage{}, err
 	}
 
 	return BuilderImage{
-		Pullspec:         builderStage.Pullspec(),
+		Pullspec:         builder.Pullspec,
 		IntermediateSBOM: iSbomPath,
 		BuilderSBOM:      bSbomPath,
 	}, nil

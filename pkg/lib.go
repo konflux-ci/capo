@@ -1,7 +1,6 @@
 package capo
 
 import (
-	"capo/pkg/includer"
 	"encoding/json"
 	"os"
 	"path"
@@ -14,31 +13,19 @@ const FinalStage string = ""
 // BuildData is a representation of COPY-ies from builder and external images.
 // Parsed from the output of the dockerfile-json tool.
 type BuildData struct {
-	Builders  []includer.StageData
-	Externals []includer.StageData
+	Builders  []Builder
+	Externals []External
 }
 
 // Builder represents a named stage (AS <alias>) in the Containerfile.
 type Builder struct {
-	// StagePullspec of the builder image.
-	StagePullspec string
+	// Pullspec of the builder image.
+	Pullspec string
 	// Alias of the builder stage.
-	StageAlias string
+	Alias string
 	// Slice of copies from this builder image.
 	// NOT the copies in this builder stage
-	StageCopies []includer.Copier
-}
-
-func (b Builder) Alias() string {
-	return b.StageAlias
-}
-
-func (b Builder) Pullspec() string {
-	return b.StagePullspec
-}
-
-func (b Builder) Copies() []includer.Copier {
-	return b.StageCopies
+	Copies []Copy
 }
 
 // External represents an external image that is copied FROM in the Containerfile.
@@ -58,14 +45,6 @@ type Copy struct {
 	Stage string
 }
 
-func (c Copy) Sources() []string {
-	return c.Source
-}
-
-func (c Copy) Destination() string {
-	return c.Dest
-}
-
 func (c Copy) IsFromFinalStage() bool {
 	return c.Stage == FinalStage
 }
@@ -77,7 +56,6 @@ type Index struct {
 	External []ExternalImage `json:"external"`
 }
 
-// FIXME: this of better names for these result structs
 type BuilderImage struct {
 	Pullspec string `json:"pullspec"`
 	// absolute path to the partial intermediate layer SBOM for this image
