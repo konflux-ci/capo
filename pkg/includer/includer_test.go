@@ -74,11 +74,11 @@ func TestExternalIncluder(t *testing.T) {
 func TestBuilderIncluder(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
-		stageD         []Stage
+		stageD         []StageData
 		aliasToSources map[string][]string
 	}{
 		"copies in final stage only": {
-			stageD: []Stage{
+			stageD: []StageData{
 				testStageData{
 					alias: "builder1",
 					copies: []Copier{
@@ -106,7 +106,7 @@ func TestBuilderIncluder(t *testing.T) {
 			},
 		},
 		"multi-stage file copy": {
-			stageD: []Stage{
+			stageD: []StageData{
 				testStageData{
 					alias: "builder1",
 					copies: []Copier{
@@ -134,7 +134,7 @@ func TestBuilderIncluder(t *testing.T) {
 			},
 		},
 		"multi-stage directory copy": {
-			stageD: []Stage{
+			stageD: []StageData{
 				testStageData{
 					alias: "builder1",
 					copies: []Copier{
@@ -172,7 +172,7 @@ func TestBuilderIncluder(t *testing.T) {
 			},
 		},
 		"ignore non-copied content": {
-			stageD: []Stage{
+			stageD: []StageData{
 				testStageData{
 					alias: "builder1",
 					copies: []Copier{
