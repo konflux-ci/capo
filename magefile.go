@@ -24,7 +24,7 @@ func Build() error {
 
 // Runs unit tests using Ginkgo.
 func Test() error {
-	return sh.RunV("go", "test", "./...")
+	return sh.RunV("ginkgo", "run", "-r", "-v")
 }
 
 // Runs the dlv debugger in a buildah namespace using 'buildah unshare'.

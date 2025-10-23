@@ -31,9 +31,9 @@ func (masks BuilderIncluders) GetIncluderForAlias(alias string) Includer {
 }
 
 // Parse builders and return a struct exposing a method for
-// fetching includers for a specific builder.
+// fetching copy masks for a specific builder.
 //
-// The includers are built by creating a 'dependency tree' for each builder.
+// The masks are built by creating a 'dependency tree' for each builder.
 // The tree's root node is a COPY command in the final building stage.
 // There is an edge between two nodes if the child node's destination
 // path is a subpath of the parent node's source paths, i.e. the parent
