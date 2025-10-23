@@ -31,30 +31,7 @@ func setupStore() storage.Store {
 
 func main() {
 	input := capo.ParsedContainerfile{
-		BuilderStages: []includer.StageData{
-			capo.NewStage(
-				"fedora-builder",
-				"docker.io/library/fedora:latest",
-				[]includer.Copier{
-					capo.NewCopy(
-						[]string{"/usr/bin/kubectl"},
-						"/usr/bin/kubectl",
-						capo.FinalStage,
-					),
-				},
-			),
-			capo.NewStage(
-				"helm-builder",
-				"docker.io/alpine/helm:latest",
-				[]includer.Copier{
-					capo.NewCopy(
-						[]string{"/usr/bin/helm"},
-						"/usr/bin/helm",
-						capo.FinalStage,
-					),
-				},
-			),
-		},
+		BuilderStages: []includer.StageData{},
 		ExternalStages: []includer.StageData{
 			capo.NewStage(
 				"",
@@ -62,7 +39,7 @@ func main() {
 				[]includer.Copier{
 					capo.NewCopy(
 						[]string{"/usr/bin/oras"},
-						"/usr/bin/oras",
+						"/bin/oras",
 						capo.FinalStage,
 					),
 				},
