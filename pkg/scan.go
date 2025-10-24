@@ -53,7 +53,7 @@ type PackageMetadataItem struct {
 	StageAlias string `json:"stage_alias,omitempty"`
 }
 
-func setupStore() (storage.Store, error) {
+func SetupStore() (storage.Store, error) {
 	// The containers/storage library requires this to run for some operations
 	if reexec.Init() {
 		return nil, fmt.Errorf("Failed to init reexec during containers/storage setup.")
@@ -81,7 +81,7 @@ func Scan(
 ) (PackageMetadata, error) {
 	var res PackageMetadata
 
-	store, err := setupStore()
+	store, err := SetupStore()
 	if err != nil {
 		return PackageMetadata{}, err
 	}
