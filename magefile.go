@@ -56,3 +56,8 @@ func Tidy() error {
 //
 //	sh.Run("git", "commit")
 //}
+
+// Builds all test images and runs the integration test.
+func IntegrationTest() error {
+	return sh.RunV("buildah", "unshare", "go", "test", "-v", "-tags=integration", "./pkg")
+}
