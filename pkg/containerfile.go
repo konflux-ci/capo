@@ -1,7 +1,11 @@
 package capo
 
 import (
+	"fmt"
+	"io"
 	"strings"
+
+	"github.com/openshift/imagebuilder"
 )
 
 var FinalStage string = ""
@@ -9,13 +13,20 @@ var FinalStage string = ""
 type copy struct {
 	sources     []string
 	destination string
-	stage       string
+	from        string
+}
+
+type cfileStageId struct {
+	// alias of this stage or empty for final stage
+	alias string
+	// pullspec of this stage or empty for final stage
+	pullspec string
 }
 
 type cfileStage struct {
-	alias    string
-	pullspec string
-	copies   []copy
+	id cfileStageId
+	// slice of copy commands in this stage
+	copies []copy
 }
 
 type stage struct {
@@ -38,120 +49,99 @@ func (s stage) Sources() []string {
 
 // ParseContainerfile takes the path to a dockerfile-json output file and
 // parses it into stages.
-func ParseContainerfile(path string) ([]Stage, error) {
-	// TODO: implement
-
-	cfileStages := []cfileStage{
-		{
-			alias:    "fedora-builder",
-			pullspec: "docker.io/library/fedora:latest",
-			copies: []copy{
-				{
-					sources:     []string{"/usr/bin/kubectl"},
-					destination: "/usr/bin/kubectl",
-					stage:       FinalStage,
-				},
-			},
-		},
-		{
-			alias:    "helm-builder",
-			pullspec: "docker.io/alpine/helm:latest",
-			copies: []copy{
-				{
-					sources:     []string{"/usr/bin/helm"},
-					destination: "/usr/bin/helm",
-					stage:       FinalStage,
-				},
-			},
-		},
-		{
-			alias:    "",
-			pullspec: "quay.io/konflux-ci/oras:41b74d6",
-			copies: []copy{
-				{
-					sources:     []string{"/usr/bin/oras"},
-					destination: "/usr/bin/oras",
-					stage:       FinalStage,
-				},
-			},
-		},
+func ParseContainerfile(reader io.Reader) (stages []Stage, err error) {
+	cfileStages, err := parseContainerfileStages(reader)
+	if err != nil {
+		return []Stage{}, nil
 	}
 
-	pullspecsToSources := mapPullspecsToSources(cfileStages)
-	stages := make([]Stage, 0)
-	for _, cfileStage := range cfileStages {
-		stages = append(stages, stage{
-			alias:    cfileStage.alias,
-			pullspec: cfileStage.pullspec,
-			sources:  pullspecsToSources[cfileStage.pullspec],
-		})
+	fmt.Printf("%+v\n", cfileStages)
+
+	aliasToStage := make(map[string]cfileStage)
+	for _, st := range cfileStages[:len(cfileStages)-1] {
+		aliasToStage[st.id.alias] = st
 	}
 
 	return stages, nil
 }
 
-func mapPullspecsToSources(stages []cfileStage) map[string][]string {
-	graphs := make([]copyNode, 0)
+func parseContainerfileStages(reader io.Reader) (res []cfileStage, err error) {
+	node, err := imagebuilder.ParseDockerfile(reader)
+
+	// TODO: make sure to deal with build args and env shit once this kind of works
+	builder := imagebuilder.NewBuilder(map[string]string{})
+
+	stages, err := imagebuilder.NewStages(node, builder)
+	if err != nil {
+		return res, err
+	}
+
+	aliasToPullspec := mapAliasesToPullspecs(stages)
+	// TODO: deal with build targets too
+
 	for i, s := range stages {
-		for _, cp := range s.copies {
-			if cp.stage == FinalStage {
-				root := copyNode{
-					pullspec: s.pullspec,
-					source:   cp.sources,
-					dest:     cp.destination,
-					children: make([]copyNode, 0),
-				}
-				buildDependencyTree(&root, stages, i)
-				graphs = append(graphs, root)
+		stageName := s.Name
+		if i == len(stages)-1 {
+			stageName = FinalStage
+		}
+
+		res = append(res, cfileStage{
+			id: cfileStageId{
+				alias:    stageName,
+				pullspec: aliasToPullspec[s.Name],
+			},
+			copies: getBuilderCopiesInStage(s),
+		})
+	}
+
+	return res, nil
+}
+
+func mapAliasesToPullspecs(stages []imagebuilder.Stage) (res map[string]string) {
+	res = make(map[string]string)
+	// skip final stage
+	for _, s := range stages[:len(stages)-1] {
+		fromNode := s.Node.Children[0]
+		res[s.Name] = fromNode.Next.Value
+	}
+
+	return res
+}
+
+func getBuilderCopiesInStage(s imagebuilder.Stage) (copies []copy) {
+	for _, child := range s.Node.Children {
+		if child.Value != "copy" {
+			continue
+		}
+
+		// TODO: deal with named contexts somehow
+		for _, fl := range child.Flags {
+			// is having a from enough to qualify this as a builder copy?
+			// it could also be a named context
+			if !strings.HasPrefix(fl, "--from=") {
+				continue
 			}
+			from := strings.TrimPrefix(fl, "--from=")
+
+			// aggregate the COPY arguments by iterating the nodes
+			args := make([]string, 0)
+			curr := child.Next
+			for {
+				if curr == nil {
+					break
+				}
+
+				args = append(args, curr.Value)
+				curr = curr.Next
+			}
+
+			copies = append(copies, copy{
+				from:        from,
+				sources:     args[:len(args)-1],
+				destination: args[len(args)-1],
+			})
 		}
 	}
 
-	pullspecsToSources := make(map[string][]string)
-	for _, tree := range graphs {
-		collectCopies(tree, pullspecsToSources)
-	}
-
-	return pullspecsToSources
-}
-
-type copyNode struct {
-	pullspec string
-	source   []string
-	dest     string
-	children []copyNode
-}
-
-// Builds a dependency tree with the root being the specified node.
-// Goes through the root's source paths and traverses recursively up the builder stages,
-// creating edges beween the nodes if the child node's destination
-// path is a subpath of the parent node's source paths, i.e. the parent
-// COPY command copies from the destination of the child's COPY.
-func buildDependencyTree(node *copyNode, stages []cfileStage, currentStageIndex int) {
-	for _, srcPath := range node.source {
-		for i := range currentStageIndex {
-			s := stages[i]
-			for _, cp := range s.copies {
-				if strings.HasPrefix(cp.destination, srcPath) {
-					child := copyNode{
-						pullspec: s.pullspec,
-						source:   cp.sources,
-						dest:     cp.destination,
-						children: make([]copyNode, 0),
-					}
-					buildDependencyTree(&child, stages, i)
-					node.children = append(node.children, child)
-				}
-			}
-		}
-	}
-}
-
-// Recursively goes through the dependency tree and modifies pullspecsToSources
-// to include content that is reachable from the final stage.
-func collectCopies(node copyNode, pullspecsToSources map[string][]string) {
-	pullspecsToSources[node.pullspec] = append(pullspecsToSources[node.pullspec], node.source...)
-	for _, child := range node.children {
-		collectCopies(child, pullspecsToSources)
-	}
+	return copies
 }

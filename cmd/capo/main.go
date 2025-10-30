@@ -5,16 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 
 	"capo/pkg"
 )
 
 func main() {
-	stages, err := capo.ParseContainerfile("")
+	r, err := os.Open("./Containerfile")
+	stages, err := capo.ParseContainerfile(r)
 	if err != nil {
 		log.Fatalf("Failed to parse containerfile %+v", err)
 	}
 	log.Printf("Parsed stages: %+v", stages)
+	return
 
 	pkgMetadata, err := capo.Scan(stages)
 	if err != nil {
