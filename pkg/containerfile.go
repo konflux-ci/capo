@@ -2,7 +2,6 @@ package capo
 
 import (
 	"io"
-	"log"
 	"strings"
 
 	"github.com/openshift/imagebuilder"
