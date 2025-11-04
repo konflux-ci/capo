@@ -12,6 +12,13 @@ func TestParseContainerfile(t *testing.T) {
 		containerfile   string
 		expectedSources map[string][]string
 	}{
+		"only external copy in final": {
+			containerfile: `FROM scratch
+							COPY --from=docker.io/library/fedora:latest /usr/bin/oras /usr/bin/oras`,
+			expectedSources: map[string][]string{
+				"docker.io/library/fedora:latest": {"/usr/bin/oras"},
+			},
+		},
 		"copies in final stage only": {
 			containerfile: `FROM docker.io/library/fedora:latest AS builder1
 							FROM docker.io/alpine/helm:latest AS builder2
