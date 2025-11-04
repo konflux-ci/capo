@@ -1,8 +1,8 @@
 package capo
 
 import (
-	"fmt"
 	"io"
+	"log"
 	"strings"
 
 	"github.com/openshift/imagebuilder"
@@ -55,14 +55,77 @@ func ParseContainerfile(reader io.Reader) (stages []Stage, err error) {
 		return []Stage{}, nil
 	}
 
-	fmt.Printf("%+v\n", cfileStages)
-
 	aliasToStage := make(map[string]cfileStage)
 	for _, st := range cfileStages[:len(cfileStages)-1] {
 		aliasToStage[st.id.alias] = st
 	}
 
+	final := cfileStages[len(cfileStages)-1]
+	stageIdToSources := make(map[cfileStageId][]string)
+	for _, cp := range final.copies {
+		for _, source := range cp.sources {
+
+			// the copy is builder type only if there's no builder stage with alias equal to the cp.from
+			// otherwise the cp.from is a pullspec and it is an external copy
+			if _, isBuilder := aliasToStage[cp.from]; isBuilder {
+				traceSource(source, aliasToStage[cp.from], stageIdToSources, aliasToStage)
+			} else {
+				externalId := cfileStageId{alias: "", pullspec: cp.from}
+				stageIdToSources[externalId] = append(stageIdToSources[externalId], source)
+			}
+		}
+	}
+
+	// construct builder stages
+	for _, cfileStage := range cfileStages[:len(cfileStages)-1] {
+		stages = append(stages, stage{
+			alias:    cfileStage.id.alias,
+			pullspec: cfileStage.id.pullspec,
+			sources:  stageIdToSources[cfileStage.id],
+		})
+
+		// the processed stageId must be deleted from the accumulator so the
+		// accumulator only contains "external" stages after builder stages are constructed.
+		// These are then processed in the next code block below.
+		delete(stageIdToSources, cfileStage.id)
+	}
+
+	// construct "external" stages
+	for id, sources := range stageIdToSources {
+		stages = append(stages, stage{
+			alias:    id.alias,
+			pullspec: id.pullspec,
+			sources:  sources,
+		})
+	}
+
 	return stages, nil
+}
+
+func traceSource(
+	source string,
+	currStage cfileStage,
+	acc map[cfileStageId][]string,
+	aliasToStage map[string]cfileStage,
+) {
+	isDirectory := strings.HasSuffix(source, "/")
+
+	foundAncestor := false
+	for _, cp := range currStage.copies {
+		if strings.HasPrefix(cp.destination, source) {
+			foundAncestor = true
+			for _, s := range cp.sources {
+				traceSource(s, aliasToStage[cp.from], acc, aliasToStage)
+			}
+		}
+	}
+
+	// If the source is a directory, we want to add it to the accumulator
+	// even if we traced some of the sources. This is because the directory could
+	// contain mixed content - some from this stage, some copied from previous stages.
+	if isDirectory || !foundAncestor {
+		acc[currStage.id] = append(acc[currStage.id], source)
+	}
 }
 
 func parseContainerfileStages(reader io.Reader) (res []cfileStage, err error) {
