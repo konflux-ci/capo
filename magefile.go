@@ -10,8 +10,9 @@ var Default = Build
 var CapoPackage = "./cmd/capo"
 
 // Runs the capo module in a buildah namespace using 'buildah unshare'.
-func Run() error {
-	return sh.RunV("buildah", "unshare", "go", "run", CapoPackage)
+// Passes args to capo.
+func Run(args string) error {
+	return sh.RunV("buildah", "unshare", "go", "run", CapoPackage, args)
 }
 
 // Runs 'go mod download' and then installs the capo binary.
