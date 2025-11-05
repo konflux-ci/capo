@@ -23,6 +23,8 @@ type PackageMetadataItem struct {
 	Checksums []string `json:"checksums,omitempty"`
 
 	// PURL of the package that this package is a dependency of.
+	// Used for resolution of relationships if one package is
+	// found multiple times as a dependency of different packages.
 	DependencyOfPURL string `json:"dependency_of_purl,omitempty"`
 
 	// Type of origin of this package, can be "builder" or "intermediate".

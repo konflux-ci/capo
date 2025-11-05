@@ -7,18 +7,43 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"capo/pkg"
 )
 
 type args struct {
 	containerfilePath string
+	buildArgs         map[string]string
+	target            string
 }
 
 func parseArgs() (args, error) {
-	cfPathFlag := "containerfile"
-	cfPathUsage := "Path to the Containerfile used in the build. Required."
-	cfPath := flag.String(cfPathFlag, "", cfPathUsage)
+	cfPath := flag.String(
+		"containerfile",
+		"",
+		"Path to the Containerfile used in the build. Required.",
+	)
+
+	buildArgs := make(map[string]string)
+	flag.Func(
+		"build-arg",
+		"Build argument passed to buildah in the form KEY=VALUE. Can be used multiple times.",
+		func(s string) error {
+			parts := strings.Split(s, "=")
+			if len(parts) != 2 {
+				return fmt.Errorf("Invalid build arg syntax for %s.", s)
+			}
+			buildArgs[parts[0]] = parts[1]
+			return nil
+		},
+	)
+
+	target := flag.String(
+		"target",
+		"",
+		"Build target passed to buildah, if any.",
+	)
 
 	flag.Parse()
 
@@ -30,7 +55,16 @@ func parseArgs() (args, error) {
 
 	return args{
 		containerfilePath: *cfPath,
+		target:            *target,
+		buildArgs:         buildArgs,
 	}, nil
+}
+
+func buildOptsFromArgs(args args) capo.BuildOptions {
+	return capo.BuildOptions{
+		Args:   args.buildArgs,
+		Target: args.target,
+	}
 }
 
 func main() {
@@ -44,7 +78,7 @@ func main() {
 		log.Fatalf("Could not open %s: %+v", args.containerfilePath, err)
 	}
 
-	stages, err := capo.ParseContainerfile(r)
+	stages, err := capo.ParseContainerfile(r, buildOptsFromArgs(args))
 	if err != nil {
 		log.Fatalf("Failed to parse containerfile %+v", err)
 	}
