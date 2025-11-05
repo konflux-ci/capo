@@ -10,6 +10,7 @@ func TestParseContainerfile(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
 		containerfile   string
+		buildOptions    BuildOptions
 		expectedSources map[string][]string
 	}{
 		"only external copy in final": {
@@ -17,6 +18,35 @@ func TestParseContainerfile(t *testing.T) {
 							COPY --from=docker.io/library/fedora:latest /usr/bin/oras /usr/bin/oras`,
 			expectedSources: map[string][]string{
 				"docker.io/library/fedora:latest": {"/usr/bin/oras"},
+			},
+		},
+		"arg evaluation": {
+			containerfile: `ARG FEDORA_REPO="docker.io/library/fedora"
+							ARG ALPINE_IMAGE="docker.io/library/alpine:latest"
+							FROM ${ALPINE_IMAGE} as builder
+							FROM scratch
+							COPY --from=${FEDORA_REPO}:${FEDORA_TAG} /usr/bin/oras /usr/bin/oras
+							COPY --from=builder /usr/bin/binary /usr/bin/binary`,
+			buildOptions: BuildOptions{
+				Args: map[string]string{
+					"FEDORA_TAG": "latest",
+				},
+			},
+			expectedSources: map[string][]string{
+				"docker.io/library/fedora:latest": {"/usr/bin/oras"},
+				"docker.io/library/alpine:latest": {"/usr/bin/binary"},
+			},
+		},
+		"build target": {
+			containerfile: `FROM docker.io/library/fedora:latest AS builder
+							COPY --from=docker.io/library/alpine:latest /usr/bin/binary /usr/bin/binary
+							FROM scratch
+							COPY --from=docker.io/library/fedora:latest /usr/bin/oras /usr/bin/oras`,
+			buildOptions: BuildOptions{
+				Target: "builder",
+			},
+			expectedSources: map[string][]string{
+				"docker.io/library/alpine:latest": {"/usr/bin/binary"},
 			},
 		},
 		"copies in final stage only": {
@@ -92,7 +122,7 @@ func TestParseContainerfile(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			reader := strings.NewReader(test.containerfile)
-			stages, err := ParseContainerfile(reader)
+			stages, err := ParseContainerfile(reader, test.buildOptions)
 			if err != nil {
 				t.Fatalf("ParseContainerfile failed: %v", err)
 			}

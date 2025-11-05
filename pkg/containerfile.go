@@ -1,6 +1,7 @@
 package capo
 
 import (
+	"fmt"
 	"io"
 	"strings"
 
@@ -46,10 +47,15 @@ func (s stage) Sources() []string {
 	return s.sources
 }
 
+type BuildOptions struct {
+	Args   map[string]string
+	Target string
+}
+
 // ParseContainerfile takes the path to a dockerfile-json output file and
 // parses it into stages.
-func ParseContainerfile(reader io.Reader) (stages []Stage, err error) {
-	cfileStages, err := parseContainerfileStages(reader)
+func ParseContainerfile(reader io.Reader, opts BuildOptions) (stages []Stage, err error) {
+	cfileStages, err := parseContainerfileStages(reader, opts)
 	if err != nil {
 		return []Stage{}, nil
 	}
@@ -127,19 +133,25 @@ func traceSource(
 	}
 }
 
-func parseContainerfileStages(reader io.Reader) (res []cfileStage, err error) {
+func parseContainerfileStages(reader io.Reader, opts BuildOptions) (res []cfileStage, err error) {
 	node, err := imagebuilder.ParseDockerfile(reader)
 
-	// TODO: make sure to deal with build args and env shit once this kind of works
-	builder := imagebuilder.NewBuilder(map[string]string{})
+	builder := imagebuilder.NewBuilder(opts.Args)
 
 	stages, err := imagebuilder.NewStages(node, builder)
 	if err != nil {
 		return res, err
 	}
 
+	if opts.Target != "" {
+		stagesTargeted, ok := stages.ThroughTarget(opts.Target)
+		if !ok {
+			return res, fmt.Errorf("the target %q was not found in the provided Containerfile", opts.Target)
+		}
+		stages = stagesTargeted
+	}
+
 	aliasToPullspec := mapAliasesToPullspecs(stages)
-	// TODO: deal with build targets too
 
 	for i, s := range stages {
 		stageName := s.Name
@@ -152,38 +164,62 @@ func parseContainerfileStages(reader io.Reader) (res []cfileStage, err error) {
 				alias:    stageName,
 				pullspec: aliasToPullspec[s.Name],
 			},
-			copies: getBuilderCopiesInStage(s),
+			copies: getBuilderCopiesInStage(s, opts.Args),
 		})
 	}
 
 	return res, nil
 }
 
+// argsMapToSlice returns the contents of a map[string]string as a slice of keys
+// and values joined with "=".
+func argsMapToSlice(m map[string]string) []string {
+	s := make([]string, 0, len(m))
+	for k, v := range m {
+		s = append(s, k+"="+v)
+	}
+	return s
+}
+
 func mapAliasesToPullspecs(stages []imagebuilder.Stage) (res map[string]string) {
 	res = make(map[string]string)
-	// skip final stage
+
+	// skip final stage, copies from that stage are not allowed
 	for _, s := range stages[:len(stages)-1] {
+		headingEnv := argsMapToSlice(s.Builder.HeadingArgs)
+		userEnv := argsMapToSlice(s.Builder.Args)
+		env := append(headingEnv, userEnv...)
+
 		fromNode := s.Node.Children[0]
-		res[s.Name] = fromNode.Next.Value
+		res[s.Name], _ = imagebuilder.ProcessWord(fromNode.Next.Value, env)
 	}
 
 	return res
 }
 
-func getBuilderCopiesInStage(s imagebuilder.Stage) (copies []copy) {
+func getBuilderCopiesInStage(s imagebuilder.Stage, args map[string]string) (copies []copy) {
+	headingEnv := argsMapToSlice(s.Builder.HeadingArgs)
+	userEnv := argsMapToSlice(s.Builder.Args)
+
+	// user provided args override the heading ARGs,
+	// so they're appended second to take priority
+	env := append(headingEnv, userEnv...)
+
 	for _, child := range s.Node.Children {
 		if child.Value != "copy" {
 			continue
 		}
 
-		// TODO: deal with named contexts somehow
 		for _, fl := range child.Flags {
-			// is having a from enough to qualify this as a builder copy?
-			// it could also be a named context
+			// TODO: When the "--from" flag is included, this is a COPY either from a builder stage,
+			// an external image or a named context. We assume that named contexts aren't used,
+			// as they're not supported in any current Konflux buildah tasks. To resolve this in
+			// the future, we might have to include a --build-context argument to capo (to use the same
+			// syntax as "buildah bud") and skip the copies that copy from these contexts.
 			if !strings.HasPrefix(fl, "--from=") {
 				continue
 			}
-			from := strings.TrimPrefix(fl, "--from=")
+			from, _ := imagebuilder.ProcessWord(strings.TrimPrefix(fl, "--from="), env)
 
 			// aggregate the COPY arguments by iterating the nodes
 			args := make([]string, 0)
