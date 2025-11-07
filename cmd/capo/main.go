@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"capo/pkg"
+	"capo/pkg/containerfile"
 )
 
 type args struct {
@@ -60,8 +61,8 @@ func parseArgs() (args, error) {
 	}, nil
 }
 
-func buildOptsFromArgs(args args) capo.BuildOptions {
-	return capo.BuildOptions{
+func buildOptsFromArgs(args args) containerfile.BuildOptions {
+	return containerfile.BuildOptions{
 		Args:   args.buildArgs,
 		Target: args.target,
 	}
@@ -78,7 +79,7 @@ func main() {
 		log.Fatalf("Could not open %s: %+v", args.containerfilePath, err)
 	}
 
-	stages, err := capo.ParseContainerfile(r, buildOptsFromArgs(args))
+	stages, err := containerfile.Parse(r, buildOptsFromArgs(args))
 	if err != nil {
 		log.Fatalf("Failed to parse containerfile %+v", err)
 	}
