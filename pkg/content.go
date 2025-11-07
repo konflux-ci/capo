@@ -33,32 +33,32 @@ import (
 // to buildah will be most likely required (such as storing the ids of the last layers/images in a stage).
 func getContent(
 	store storage.Store,
-	stage Stage,
+	pkgSource packageSource,
 	builderContentPath string,
 	intermediateContentPath string,
 ) error {
-	imgId, err := store.Lookup(stage.Pullspec())
+	imgId, err := store.Lookup(pkgSource.pullspec)
 	if err != nil {
-		return fmt.Errorf("Could not find image: %s in buildah storage.", stage.Pullspec())
+		return fmt.Errorf("Could not find image: %s in buildah storage.", pkgSource.pullspec)
 	}
 	img, _ := store.Image(imgId)
 
-	intermediate, err := getIntermediateContent(store, img, stage.Sources(), intermediateContentPath)
+	intermediate, err := getIntermediateContent(store, img, pkgSource.sources, intermediateContentPath)
 	if err != nil {
 		return err
 	}
 
 	if len(intermediate) == 0 {
-		log.Printf("Found no intermediate content for %s.", stage.Pullspec())
+		log.Printf("Found no intermediate content for %s.", pkgSource.pullspec)
 	} else {
-		log.Printf("Included intermediate content %+v for %s.", intermediate, stage.Pullspec())
+		log.Printf("Included intermediate content %+v for %s.", intermediate, pkgSource.pullspec)
 	}
 
-	builder, err := getImageContent(store, img, stage.Sources(), builderContentPath)
+	builder, err := getImageContent(store, img, pkgSource.sources, builderContentPath)
 	if err != nil {
 		return err
 	}
-	log.Printf("Included builder content %+v for %s.", builder, stage.Pullspec())
+	log.Printf("Included builder content %+v for %s.", builder, pkgSource.pullspec)
 
 	return nil
 }
