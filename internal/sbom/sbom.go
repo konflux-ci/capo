@@ -43,7 +43,8 @@ func SyftScan(root string) ([]SyftPackage, error) {
 
 // Get a slice of SyftPackage structs of "top level" packages. These are packages
 // that have a direct CONTAINS relationship from the document root.
-func getTopLevelPackages(sbom *sbom.SBOM) (packages []SyftPackage) {
+func getTopLevelPackages(sbom *sbom.SBOM) []SyftPackage {
+	var packages []SyftPackage
 	// collect pkg IDs of packages that are contained directly by the document root
 	topLevelPkgIds := make(map[artifact.ID]bool)
 	for _, rel := range sbom.Relationships {
@@ -81,8 +82,8 @@ func getTopLevelPackages(sbom *sbom.SBOM) (packages []SyftPackage) {
 
 // Create a translation map between IDs and their associated packages
 // in the SBOM for faster retrieval.
-func getIdToPackageMap(sbom *sbom.SBOM) (res map[artifact.ID]pkg.Package) {
-	res = make(map[artifact.ID]pkg.Package)
+func getIdToPackageMap(sbom *sbom.SBOM) map[artifact.ID]pkg.Package {
+	res := make(map[artifact.ID]pkg.Package)
 	for pkg := range sbom.Artifacts.Packages.Enumerate() {
 		res[pkg.ID()] = pkg
 	}
