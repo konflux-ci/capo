@@ -15,37 +15,39 @@ var FinalStage string = ""
 // or directly from an image.
 type Copy struct {
 	// Sources in the command.
-	Sources     []string
+	Sources []string
 	// Destination in the command.
 	Destination string
 	// Alias of the stage the command is copying from in the case
 	// of stage copies or a pullspec when copying directly from an image.
-	From        string
+	From string
 }
 
 // A builder or final stage in a Containerfile
 type Stage struct {
 	// Alias of the builder stage or equal to FinalStage if final
-	Alias    string
+	Alias string
 	// Base image for the stage
 	Pullspec string
 	// Builder copies in this stage
-	Copies   []Copy
+	Copies []Copy
 }
 
 type BuildOptions struct {
 	// Build arguments passed to buildah for the build
-	Args   map[string]string
+	Args map[string]string
 	// Target stage of the buildah build
 	Target string
 }
 
 // Parse reads a Containerfile from the passed reader and uses the passed
 // BuildOptions to parse the Containerfile into stages.
-func Parse(reader io.Reader, opts BuildOptions) (res []Stage, err error) {
+func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
+	var res []Stage
+
 	node, err := imagebuilder.ParseDockerfile(reader)
 	if err != nil {
-		return res, err
+		return nil, err
 	}
 
 	// TODO: At this stage, Buildah code takes into account OS and ARCH CLI args
@@ -57,13 +59,13 @@ func Parse(reader io.Reader, opts BuildOptions) (res []Stage, err error) {
 	builder := imagebuilder.NewBuilder(opts.Args)
 	rawStages, err := imagebuilder.NewStages(node, builder)
 	if err != nil {
-		return res, err
+		return nil, err
 	}
 
 	if opts.Target != "" {
 		stagesTargeted, ok := rawStages.ThroughTarget(opts.Target)
 		if !ok {
-			return res, fmt.Errorf("the target %q was not found in the provided Containerfile", opts.Target)
+			return nil, fmt.Errorf("the target %q was not found in the provided Containerfile", opts.Target)
 		}
 		rawStages = stagesTargeted
 	}
@@ -98,8 +100,8 @@ func argsMapToSlice(m map[string]string) []string {
 
 // mapAliasesToPullspecs uses the passed imagebuilder.Stage structs to create
 // a mapping between stage aliases and the base image pullspecs for those stages.
-func mapAliasesToPullspecs(stages []imagebuilder.Stage) (res map[string]string) {
-	res = make(map[string]string)
+func mapAliasesToPullspecs(stages []imagebuilder.Stage) map[string]string {
+	res := make(map[string]string)
 
 	// skip final stage, copies from that stage are not allowed
 	for _, s := range stages[:len(stages)-1] {

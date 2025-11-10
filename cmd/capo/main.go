@@ -17,9 +17,9 @@ type args struct {
 	// Path to the containerfile to parse
 	containerfilePath string
 	// Build arguments passed to buildah for the build
-	buildArgs         map[string]string
+	buildArgs map[string]string
 	// Target stage of the buildah build
-	target            string
+	target string
 }
 
 // Define and parse command line arguments and return an "args" struct or an error.

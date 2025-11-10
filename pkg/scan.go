@@ -78,7 +78,9 @@ func setupStore() (storage.Store, error) {
 // for resolution by Mobster.
 func Scan(
 	stages []containerfile.Stage,
-) (res PackageMetadata, err error) {
+) (PackageMetadata, error) {
+	var res PackageMetadata
+
 	store, err := setupStore()
 	if err != nil {
 		return PackageMetadata{}, err
@@ -98,7 +100,8 @@ func Scan(
 
 // getPackageSources uses the passed containerfile stages and returns a slice of
 // packageSource structs, specifying which COPY-ied content originates from which builder stage.
-func getPackageSources(stages []containerfile.Stage) (res []packageSource) {
+func getPackageSources(stages []containerfile.Stage) []packageSource {
+	var res []packageSource
 	aliasToStage := make(map[string]*containerfile.Stage)
 
 	// use index iteration to get consistent references to stages
@@ -186,17 +189,17 @@ func traceSource(
 // scanSource uses the passed initialized storage.Store struct to syft scan content
 // from the passed packageSource. Returns a slice of PackageMetadataItem structs specifying
 // origins of packages.
-func scanSource(store storage.Store, pkgSource packageSource) (res []PackageMetadataItem, err error) {
+func scanSource(store storage.Store, pkgSource packageSource) ([]PackageMetadataItem, error) {
 	// builder content is content that is present in a builder stage base image
 	builderContentPath, err := os.MkdirTemp("", "")
 	if err != nil {
-		return res, err
+		return nil, err
 	}
 
 	// intermediate content is content that created in a builder stage base during the build
 	intermediateContentPath, err := os.MkdirTemp("", "")
 	if err != nil {
-		return res, err
+		return nil, err
 	}
 
 	// if in debug mode, print the paths to saved content
@@ -212,17 +215,17 @@ func scanSource(store storage.Store, pkgSource packageSource) (res []PackageMeta
 
 	err = getContent(store, pkgSource, builderContentPath, intermediateContentPath)
 	if err != nil {
-		return res, err
+		return nil, err
 	}
 
 	intermediatePkgs, err := sbom.SyftScan(intermediateContentPath)
 	if err != nil {
-		return res, err
+		return nil, err
 	}
 
 	builderPkgs, err := sbom.SyftScan(builderContentPath)
 	if err != nil {
-		return res, err
+		return nil, err
 	}
 
 	return getPackageMetadata(pkgSource, builderPkgs, intermediatePkgs), nil
@@ -234,7 +237,9 @@ func getPackageMetadata(
 	pkgSource packageSource,
 	builderPkgs []sbom.SyftPackage,
 	intermediatePkgs []sbom.SyftPackage,
-) (res []PackageMetadataItem) {
+) []PackageMetadataItem {
+	var res []PackageMetadataItem
+
 	for _, bpkg := range builderPkgs {
 		res = append(res, PackageMetadataItem{
 			Pullspec:         pkgSource.pullspec,
