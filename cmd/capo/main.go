@@ -14,11 +14,15 @@ import (
 )
 
 type args struct {
+	// Path to the containerfile to parse
 	containerfilePath string
+	// Build arguments passed to buildah for the build
 	buildArgs         map[string]string
+	// Target stage of the buildah build
 	target            string
 }
 
+// Define and parse command line arguments and return an "args" struct or an error.
 func parseArgs() (args, error) {
 	cfPath := flag.String(
 		"containerfile",
@@ -61,6 +65,8 @@ func parseArgs() (args, error) {
 	}, nil
 }
 
+// Build buildah-specific arguments from capo commandline arguments.
+// These are used in the containerfile parser.
 func buildOptsFromArgs(args args) containerfile.BuildOptions {
 	return containerfile.BuildOptions{
 		Args:   args.buildArgs,
@@ -93,6 +99,7 @@ func main() {
 	printPkgMetadata(pkgMetadata)
 }
 
+// Serialize and print package metadata to stdout.
 func printPkgMetadata(pkgMetadata capo.PackageMetadata) {
 	var buf bytes.Buffer
 
