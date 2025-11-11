@@ -22,7 +22,7 @@ type packageSource struct {
 	// pullspec of this stage.
 	pullspec string
 
-	// Slice of paths to content in the layer/image which should be syft-scannedn
+	// Slice of paths to content in the layer/image which should be syft-scanned
 	sources []string
 }
 
