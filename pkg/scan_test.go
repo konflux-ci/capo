@@ -1,7 +1,7 @@
 package capo
 
 import (
-	"capo/pkg/containerfile"
+	"github.com/konflux-ci/capo/pkg/containerfile"
 	"testing"
 )
 
