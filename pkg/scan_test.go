@@ -1,8 +1,10 @@
 package capo
 
 import (
-	"github.com/konflux-ci/capo/pkg/containerfile"
+	"slices"
 	"testing"
+
+	"github.com/konflux-ci/capo/pkg/containerfile"
 )
 
 // comparePackageSources compares two slices of packageSource, ignoring order
@@ -40,14 +42,7 @@ func packageSourceEqual(a, b packageSource) bool {
 	}
 
 	for _, aSource := range a.sources {
-		found := false
-		for _, bSource := range b.sources {
-			if aSource == bSource {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.Contains(b.sources, aSource) {
 			return false
 		}
 	}

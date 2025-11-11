@@ -1,6 +1,7 @@
 package containerfile
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -42,29 +43,18 @@ type BuildOptions struct {
 	Target string
 }
 
-// Error returned by Parse when the Containerfile contains ambiguous relative paths
-// such as relative WORKDIR commands without a previous absolute command or
-// COPY destinations with relative paths.
-type WorkdirError struct {
-	// The original Containerfile command that caused the error
-	command string
-}
-
-func (e *WorkdirError) Error() string {
-	return fmt.Sprintf(
-		"containerfile uses a relative path in a context where the WORKDIR is not manually set: %s",
-		e.command,
-	)
-}
+var ErrTargetNotFound = errors.New("specified target stage was not found in the containerfile")
+var ErrAmbiguousRelativePath = errors.New("relative path in containerfile is ambiguous")
+var ErrParse = errors.New("error while parsing containerfile")
 
 // Parse reads a Containerfile from the passed reader and uses the passed
 // BuildOptions to parse the Containerfile into stages.
 func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
-	var res []Stage
+	res := make([]Stage, 0)
 
 	node, err := imagebuilder.ParseDockerfile(reader)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 
 	// TODO: At this stage, Buildah code takes into account OS and ARCH CLI args
@@ -77,13 +67,13 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 	builder := imagebuilder.NewBuilder(opts.Args)
 	rawStages, err := imagebuilder.NewStages(node, builder)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 
 	if opts.Target != "" {
 		stagesTargeted, ok := rawStages.ThroughTarget(opts.Target)
 		if !ok {
-			return nil, fmt.Errorf("the target %q was not found in the provided Containerfile", opts.Target)
+			return nil, fmt.Errorf("%w: %s", ErrTargetNotFound, opts.Target)
 		}
 		rawStages = stagesTargeted
 	}
@@ -173,7 +163,7 @@ func getBuilderCopiesInStage(s imagebuilder.Stage) ([]Copy, error) {
 				// if the path is relative, it is relative to the last set workdir
 				// so we need to fail if a WORKDIR command was not yet specified
 				if workdir == "" {
-					return copies, &WorkdirError{child.Original}
+					return copies, fmt.Errorf("%w: %q", ErrAmbiguousRelativePath, child.Original)
 				}
 
 				workdir = filepath.Join(workdir, dirPath)
@@ -214,11 +204,7 @@ func parseCopy(node *parser.Node, workdir string, env []string) (*Copy, error) {
 		// aggregate the COPY arguments by iterating the nodes
 		args := make([]string, 0)
 		curr := node.Next
-		for {
-			if curr == nil {
-				break
-			}
-
+		for curr != nil {
 			args = append(args, curr.Value)
 			curr = curr.Next
 		}
@@ -229,7 +215,8 @@ func parseCopy(node *parser.Node, workdir string, env []string) (*Copy, error) {
 		// resolve relative paths
 		if !filepath.IsAbs(destination) {
 			if workdir == "" {
-				return nil, &WorkdirError{node.Original}
+				return nil, fmt.Errorf("%w: %q", ErrAmbiguousRelativePath, node.Original)
+
 			}
 
 			var destIsDir = strings.HasSuffix(destination, "/") || destination == "." || destination == ".."

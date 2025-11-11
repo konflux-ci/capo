@@ -1,6 +1,7 @@
 package capo
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -53,20 +54,22 @@ type PackageMetadataItem struct {
 	StageAlias string `json:"stage_alias,omitempty"`
 }
 
+var ErrStorageSetup = errors.New("error while setting up buildah storage")
+
 func setupStore() (storage.Store, error) {
 	// The containers/storage library requires this to run for some operations
 	if reexec.Init() {
-		return nil, fmt.Errorf("Failed to init reexec during containers/storage setup.")
+		return nil, fmt.Errorf("%w: failed to init reexec", ErrStorageSetup)
 	}
 
 	opts, err := storage.DefaultStoreOptions()
 	if err != nil {
-		return nil, fmt.Errorf("Failed to create default container/storage options.")
+		return nil, fmt.Errorf("%w: failed to create default storage options: %w", ErrStorageSetup, err)
 	}
 
 	store, err := storage.GetStore(opts)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to create default container/storage store.")
+		return nil, fmt.Errorf("%w: failed to create storage: %w", ErrStorageSetup, err)
 	}
 
 	return store, nil
@@ -79,7 +82,9 @@ func setupStore() (storage.Store, error) {
 func Scan(
 	stages []containerfile.Stage,
 ) (PackageMetadata, error) {
-	var res PackageMetadata
+	res := PackageMetadata{
+		Packages: make([]PackageMetadataItem, 0),
+	}
 
 	store, err := setupStore()
 	if err != nil {
@@ -89,7 +94,7 @@ func Scan(
 	for _, pkgSource := range getPackageSources(stages) {
 		stagePkgItems, err := scanSource(store, pkgSource)
 		if err != nil {
-			return PackageMetadata{}, fmt.Errorf("Failed to scan source %+v with error: %v.", pkgSource, err)
+			return PackageMetadata{}, fmt.Errorf("failed to scan source %+v with error: %w", pkgSource, err)
 		}
 
 		res.Packages = append(res.Packages, stagePkgItems...)
@@ -101,7 +106,7 @@ func Scan(
 // getPackageSources uses the passed containerfile stages and returns a slice of
 // packageSource structs, specifying which COPY-ied content originates from which builder stage.
 func getPackageSources(stages []containerfile.Stage) []packageSource {
-	var res []packageSource
+	res := make([]packageSource, 0)
 	aliasToStage := make(map[string]*containerfile.Stage)
 
 	// use index iteration to get consistent references to stages
@@ -195,17 +200,17 @@ func traceSource(
 // scanSource uses the passed initialized storage.Store struct to syft scan content
 // from the passed packageSource. Returns a slice of PackageMetadataItem structs specifying
 // origins of packages.
-func scanSource(store storage.Store, pkgSource packageSource) ([]PackageMetadataItem, error) {
+func scanSource(store storage.Store, pkgSource packageSource) (_ []PackageMetadataItem, err error) {
 	// builder content is content that is present in a builder stage base image
 	builderContentPath, err := os.MkdirTemp("", "")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: failed to create temp directory: %w", ErrIO, err)
 	}
 
 	// intermediate content is content that created in a builder stage base during the build
 	intermediateContentPath, err := os.MkdirTemp("", "")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: failed to create temp directory: %w", ErrIO, err)
 	}
 
 	// if in debug mode, print the paths to saved content
@@ -215,8 +220,10 @@ func scanSource(store storage.Store, pkgSource packageSource) ([]PackageMetadata
 		log.Printf("[DEBUG] Builder %s content path: %s", pkgSource.pullspec, builderContentPath)
 		log.Printf("[DEBUG] Intermediate %s content path: %s", pkgSource.pullspec, intermediateContentPath)
 	} else {
-		defer os.RemoveAll(builderContentPath)
-		defer os.RemoveAll(intermediateContentPath)
+		defer func() {
+			err = os.RemoveAll(builderContentPath)
+			err = os.RemoveAll(intermediateContentPath)
+		}()
 	}
 
 	err = getContent(store, pkgSource, builderContentPath, intermediateContentPath)
@@ -226,12 +233,12 @@ func scanSource(store storage.Store, pkgSource packageSource) ([]PackageMetadata
 
 	intermediatePkgs, err := sbom.SyftScan(intermediateContentPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to scan intermediate content: %w", err)
 	}
 
 	builderPkgs, err := sbom.SyftScan(builderContentPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to scan builder content: %w", err)
 	}
 
 	return getPackageMetadata(pkgSource, builderPkgs, intermediatePkgs), nil
@@ -244,7 +251,7 @@ func getPackageMetadata(
 	builderPkgs []sbom.SyftPackage,
 	intermediatePkgs []sbom.SyftPackage,
 ) []PackageMetadataItem {
-	var res []PackageMetadataItem
+	res := make([]PackageMetadataItem, 0)
 
 	for _, bpkg := range builderPkgs {
 		res = append(res, PackageMetadataItem{
