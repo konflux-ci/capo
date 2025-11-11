@@ -2,7 +2,7 @@
 
 Capo is a program and library to inspect the result of a
 [buildah](https://github.com/containers/buildah) build and scan partial image
-content for better contextualization of OCI image SBOMs.
+content for better contextualization of packages in OCI image SBOMs.
 
 It is primarily developed to be used in the [Konflux CI](https://github.com/konflux-ci)
 project, to deliver more accurate OCI image SBOMs to customers.
@@ -11,9 +11,30 @@ project, to deliver more accurate OCI image SBOMs to customers.
 > This project is a work in progress, and its API is unstable. Until version
 > v1.0.0 is available, the API might change on minor version increase.
 
-## Quickstart
 
-TODO: after argument parsing is implemented, fill out this chapter
+## Quickstart
+To install, simply run:
+```sh
+go install github.com/konflux-ci/capo@latest
+```
+
+After capo is installed, you can build your image using buildah and run capo.
+```sh
+buildah build -f Containerfile
+capo --containerfile=Containerfile
+```
+
+When building an image with certain special options, these need to be passed to
+capo as well. An example of these are the `--target` and `--build-arg` options:
+```sh
+buildah build -f Containerfile --target builder --build-arg KEY=VAL
+capo --containerfile=Containerfile --target=builder --build-arg=KEY=VAL
+```
+
+For the full list of these options, consult the usage:
+```sh
+capo -h
+```
 
 ## Contributing
 The project uses [mage](https://github.com/magefile/mage) as a runner, to make
