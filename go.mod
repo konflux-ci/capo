@@ -1,5 +1,5 @@
 //go:build exclude_graphdriver_btrfs
-module capo
+module github.com/konflux-ci/capo
 
 require (
 	github.com/anchore/syft v1.32.0

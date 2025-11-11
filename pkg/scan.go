@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"capo/internal/sbom"
-	"capo/pkg/containerfile"
+	"github.com/konflux-ci/capo/internal/sbom"
+	"github.com/konflux-ci/capo/pkg/containerfile"
 
 	"go.podman.io/storage"
 	"go.podman.io/storage/pkg/reexec"

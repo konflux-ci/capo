@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"capo/pkg"
-	"capo/pkg/containerfile"
+	"github.com/konflux-ci/capo/pkg"
+	"github.com/konflux-ci/capo/pkg/containerfile"
 )
 
 type args struct {
