@@ -160,6 +160,12 @@ func getPackageSources(stages []containerfile.Stage) []packageSource {
 	return res
 }
 
+// traceSource takes a source path and the stage it was found in and recursively
+// traces its origin up the builder stages. Once the true origin of the source
+// path is found it modifies the passed accumulator so that pointers to stages map
+// to the source paths that originated in them.
+// aliasToStage is a mapping of stage aliases to stage pointers to use for lookups
+// when resolving COPY commands.
 func traceSource(
 	source string,
 	currStage *containerfile.Stage,
