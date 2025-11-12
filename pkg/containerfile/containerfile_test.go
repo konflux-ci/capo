@@ -1,10 +1,51 @@
 package containerfile
 
 import (
+	"fmt"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestParseBuiltinArgs(t *testing.T) {
+	t.Parallel()
+	containerfile := `FROM docker.io/library/alpine:${TARGETARCH} as builder
+						FROM scratch
+						COPY --from=builder /usr/bin/binary /usr/bin/binary`
+
+	expectedPullspec := fmt.Sprintf("docker.io/library/alpine:%s", runtime.GOARCH)
+
+	expected := []Stage{
+		{
+			Alias:    "builder",
+			Pullspec: expectedPullspec,
+			Copies:   []Copy{},
+		},
+		{
+			Alias:    FinalStage,
+			Pullspec: "",
+			Copies: []Copy{
+				{
+					From:        "builder",
+					Sources:     []string{"/usr/bin/binary"},
+					Destination: "/usr/bin/binary",
+				},
+			},
+		},
+	}
+
+	reader := strings.NewReader(containerfile)
+	actual, err := Parse(reader, BuildOptions{})
+
+	if err != nil {
+		t.Fatalf("Parsing failed: %v", err)
+	}
+
+	if !reflect.DeepEqual(actual, expected) {
+		t.Fatalf("Actual parsed stages %+v don't match expected %+v", actual, expected)
+	}
+}
 
 func TestParse(t *testing.T) {
 	t.Parallel()
