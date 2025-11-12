@@ -52,8 +52,9 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 
 	// TODO: At this stage, Buildah code takes into account OS and ARCH CLI args
 	// and overrides the built-in TARGETOS and TARGETARCH args (and others).
-	// In Konflux build, this is currently not supported but I'm keeping this here
-	// as a guideline.
+	// The imagebuilder automatically injects these args when evaluating args.
+	// In Konflux build, target and platform overriding is currently not supported
+	// but I'm keeping this here as a guideline.
 	// https://github.com/containers/buildah/blob/main/imagebuildah/build.go#L431
 
 	builder := imagebuilder.NewBuilder(opts.Args)
