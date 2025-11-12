@@ -3,9 +3,11 @@ package containerfile
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/openshift/imagebuilder"
+	"github.com/openshift/imagebuilder/dockerfile/parser"
 )
 
 var FinalStage string = ""
@@ -38,6 +40,21 @@ type BuildOptions struct {
 	Args map[string]string
 	// Target stage of the buildah build
 	Target string
+}
+
+// Error returned by Parse when the Containerfile contains ambiguous relative paths
+// such as relative WORKDIR commands without a previous absolute command or
+// COPY destinations with relative paths.
+type WorkdirError struct {
+	// The original Containerfile command that caused the error
+	command string
+}
+
+func (e *WorkdirError) Error() string {
+	return fmt.Sprintf(
+		"containerfile uses a relative path in a context where the WORKDIR is not manually set: %s",
+		e.command,
+	)
 }
 
 // Parse reads a Containerfile from the passed reader and uses the passed
@@ -79,10 +96,15 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 			stageName = FinalStage
 		}
 
+		copies, err := getBuilderCopiesInStage(s)
+		if err != nil {
+			return res, err
+		}
+
 		res = append(res, Stage{
 			Alias:    stageName,
 			Pullspec: aliasToPullspec[s.Name],
-			Copies:   getBuilderCopiesInStage(s),
+			Copies:   copies,
 		})
 	}
 
@@ -122,9 +144,18 @@ func mapAliasesToPullspecs(stages []imagebuilder.Stage) map[string]string {
 // present in that stage.
 // A COPY command is builder-type if the "--from" flag is specified and it copies from
 // a builder stage or directly from an image.
+//
+// WORKDIR commands are taken into account and the destinations of COPY commands
+// are resolved to be absolute instead of relative, where needed. If the Containerfile
+// contains builder-type COPY commands that copy to a relative destination and don't
+// specify the WORKDIR in advance, getBuilderCopiesInStage returns a workdirError.
+// This limitation exists because each base image can set its own WORKDIR and this cannot
+// be determined based on just the Containerfile.
+//
 // WARNING: named contexts in the Containerfile are not supported
-func getBuilderCopiesInStage(s imagebuilder.Stage) []Copy {
+func getBuilderCopiesInStage(s imagebuilder.Stage) ([]Copy, error) {
 	copies := make([]Copy, 0)
+	workdir := ""
 	headingEnv := argsMapToSlice(s.Builder.HeadingArgs)
 	userEnv := argsMapToSlice(s.Builder.Args)
 
@@ -133,40 +164,88 @@ func getBuilderCopiesInStage(s imagebuilder.Stage) []Copy {
 	env := append(headingEnv, userEnv...)
 
 	for _, child := range s.Node.Children {
-		if child.Value != "copy" {
-			continue
-		}
-
-		for _, fl := range child.Flags {
-			// TODO: When the "--from" flag is included, this is a COPY either from a builder stage,
-			// an external image or a named context. We assume that named contexts aren't used,
-			// as they're not supported in any current Konflux buildah tasks. To resolve this in
-			// the future, we might have to include a --build-context argument to capo (to use the same
-			// syntax as "buildah bud") and skip the copies that copy from these contexts.
-			if !strings.HasPrefix(fl, "--from=") {
-				continue
-			}
-			from, _ := imagebuilder.ProcessWord(strings.TrimPrefix(fl, "--from="), env)
-
-			// aggregate the COPY arguments by iterating the nodes
-			args := make([]string, 0)
-			curr := child.Next
-			for {
-				if curr == nil {
-					break
+		switch child.Value {
+		case "workdir":
+			dirPath := child.Next.Value
+			if strings.HasPrefix(dirPath, "/") {
+				workdir = dirPath
+			} else {
+				// if the path is relative, it is relative to the last set workdir
+				// so we need to fail if a WORKDIR command was not yet specified
+				if workdir == "" {
+					return copies, &WorkdirError{child.Original}
 				}
 
-				args = append(args, curr.Value)
-				curr = curr.Next
+				workdir = filepath.Join(workdir, dirPath)
 			}
 
-			copies = append(copies, Copy{
-				From:        from,
-				Sources:     args[:len(args)-1],
-				Destination: args[len(args)-1],
-			})
+		case "copy":
+			cp, err := parseCopy(child, workdir, env)
+			if err != nil {
+				return copies, err
+			}
+
+			if cp != nil {
+				copies = append(copies, *cp)
+			}
 		}
 	}
 
-	return copies
+	return copies, nil
+}
+
+// parseCopy takes a raw dockerfile parser Node and optionally returns a pointer
+// to a parsed Copy struct.
+// Returns (nil, nil) if the COPY command is not builder-type, but copies from a context.
+// Uses the passed workdir to resolve relative paths in the COPY's destination to absolute.
+// Uses the passed env to evaluate arguments in the COPY.
+func parseCopy(node *parser.Node, workdir string, env []string) (*Copy, error) {
+	for _, fl := range node.Flags {
+		// TODO: When the "--from" flag is included, this is a COPY either from a builder stage,
+		// an external image or a named context. We assume that named contexts aren't used,
+		// as they're not supported in any current Konflux buildah tasks. To resolve this in
+		// the future, we might have to include a --build-context argument to capo (to use the same
+		// syntax as "buildah bud") and skip the copies that copy from these contexts.
+		if !strings.HasPrefix(fl, "--from=") {
+			continue
+		}
+		from, _ := imagebuilder.ProcessWord(strings.TrimPrefix(fl, "--from="), env)
+
+		// aggregate the COPY arguments by iterating the nodes
+		args := make([]string, 0)
+		curr := node.Next
+		for {
+			if curr == nil {
+				break
+			}
+
+			args = append(args, curr.Value)
+			curr = curr.Next
+		}
+
+		sources := args[:len(args)-1]
+
+		destination := args[len(args)-1]
+		// resolve relative paths
+		if !filepath.IsAbs(destination) {
+			if workdir == "" {
+				return nil, &WorkdirError{node.Original}
+			}
+
+			var destIsDir = strings.HasSuffix(destination, "/") || destination == "." || destination == ".."
+			if destIsDir {
+				destination = filepath.Join(workdir, destination) + "/"
+			} else {
+				destination = filepath.Join(workdir, destination)
+			}
+		}
+
+		return &Copy{
+			From:        from,
+			Sources:     sources,
+			Destination: destination,
+		}, nil
+	}
+
+	return nil, nil
 }

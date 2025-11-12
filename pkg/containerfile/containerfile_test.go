@@ -1,6 +1,7 @@
 package containerfile
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"runtime"
@@ -44,6 +45,37 @@ func TestParseBuiltinArgs(t *testing.T) {
 
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("Actual parsed stages %+v don't match expected %+v", actual, expected)
+	}
+}
+
+// Test that parsing containerfiles with relative paths fails when attempting
+// to use ambiguous relative paths.
+func TestParseInvalidRelativePaths(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		containerfile string
+	}{
+		"relative WORKDIR": {
+			containerfile: `FROM scratch
+							WORKDIR app/`,
+		},
+		"relative COPY destination without WORKDIR": {
+			containerfile: `FROM docker.io/library/helm:latest AS builder
+							FROM scratch
+							COPY --from=builder /usr/bin/helm helm`,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			reader := strings.NewReader(test.containerfile)
+			var we *WorkdirError
+			_, err := Parse(reader, BuildOptions{})
+			if !errors.As(err, &we) {
+				t.Fatalf("Parse didn't return WorkdirError when expected, actual: %v", err)
+			}
+		})
 	}
 }
 
@@ -178,6 +210,60 @@ func TestParse(t *testing.T) {
 							From:        "builder2",
 							Sources:     []string{"/usr/bin/oras"},
 							Destination: "/usr/bin/oras",
+						},
+					},
+				},
+			},
+		},
+		"relative path resolution": {
+			containerfile: `FROM docker.io/alpine/helm:latest AS builder
+							FROM scratch
+							WORKDIR /usr/bin/
+							COPY --from=builder /usr/bin/rustc rustcompiler
+							COPY --from=builder /usr/bin/mono ../app/
+							COPY --from=builder /usr/bin/go ./go
+							COPY --from=builder /usr/bin/helm app/
+							COPY --from=builder /usr/bin/syft ..
+							COPY --from=builder /usr/bin/oras .`,
+			expected: []Stage{
+				{
+					Alias:    "builder",
+					Pullspec: "docker.io/alpine/helm:latest",
+					Copies:   []Copy{},
+				},
+				{
+					Alias:    FinalStage,
+					Pullspec: "",
+					Copies: []Copy{
+						{
+							From:        "builder",
+							Sources:     []string{"/usr/bin/rustc"},
+							Destination: "/usr/bin/rustcompiler",
+						},
+						{
+							From:        "builder",
+							Sources:     []string{"/usr/bin/mono"},
+							Destination: "/usr/app/",
+						},
+						{
+							From:        "builder",
+							Sources:     []string{"/usr/bin/go"},
+							Destination: "/usr/bin/go",
+						},
+						{
+							From:        "builder",
+							Sources:     []string{"/usr/bin/helm"},
+							Destination: "/usr/bin/app/",
+						},
+						{
+							From:        "builder",
+							Sources:     []string{"/usr/bin/syft"},
+							Destination: "/usr/",
+						},
+						{
+							From:        "builder",
+							Sources:     []string{"/usr/bin/oras"},
+							Destination: "/usr/bin/",
 						},
 					},
 				},
