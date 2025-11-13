@@ -1,5 +1,9 @@
 ---
 version: "2"
+run:
+  # Use the same build tags that are used in go.mod
+  build-tags:
+    - exclude_graphdriver_btrfs
 linters:
   # https://golangci-lint.run/docs/linters/
   default: standard
