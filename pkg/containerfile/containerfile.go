@@ -167,7 +167,7 @@ func getBuilderCopiesInStage(s imagebuilder.Stage) ([]Copy, error) {
 		switch child.Value {
 		case "workdir":
 			dirPath := child.Next.Value
-			if strings.HasPrefix(dirPath, "/") {
+			if filepath.IsAbs(dirPath) {
 				workdir = dirPath
 			} else {
 				// if the path is relative, it is relative to the last set workdir
