@@ -64,7 +64,7 @@ func getContent(
 }
 
 func includes(sources []string, path string) bool {
-	if !strings.HasPrefix(path, "/") {
+	if !filepath.IsAbs(path) {
 		path = "/" + path
 	}
 
