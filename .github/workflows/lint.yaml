@@ -1,4 +1,4 @@
-name: CI
+name: Lint
 
 on:
   push:
@@ -30,9 +30,3 @@ jobs:
       uses: golangci/golangci-lint-action@v8
       with:
         version: latest
-
-    - name: Run tests
-      run: mage test
-
-    - name: Build
-      run: mage build
