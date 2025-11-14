@@ -264,4 +264,5 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
+// WARNING: when changing, make sure to grep the version number in CI
 go 1.24.4

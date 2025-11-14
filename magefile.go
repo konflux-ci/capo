@@ -61,10 +61,8 @@ func Lint() error {
 }
 
 // Runs checks on the code and creates the specified git tag.
-//func Release(ctx context.Context, version string) error {
-//	mg.Deps(Build, Vet, Tidy, Test)
-//
-//	// TODO: restrict to 'main' branch
-//
-//	sh.Run("git", "commit")
-//}
+func Release(version string) error {
+	sh.RunV("git", "tag", version)
+	sh.RunV("git", "push", "origin", version)
+	return nil
+}
