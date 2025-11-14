@@ -60,16 +60,13 @@ func Lint() error {
 	return sh.RunV("golangci-lint", "run")
 }
 
-// Runs checks on the code and creates the specified git tag.
-//func Release(ctx context.Context, version string) error {
-//	mg.Deps(Build, Vet, Tidy, Test)
-//
-//	// TODO: restrict to 'main' branch
-//
-//	sh.Run("git", "commit")
-//}
-
 // Builds all test images and runs the integration test.
 func IntegrationTest() error {
 	return sh.RunV("buildah", "unshare", "go", "test", "-v", "-tags=integration", "./pkg")
+}
+
+func Release(version string) error {
+	sh.RunV("git", "tag", version)
+	sh.RunV("git", "push", "origin", version)
+	return nil
 }
