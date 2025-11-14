@@ -14,7 +14,6 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
-      - darwin
     goarch:
       - amd64
       - arm64
@@ -32,10 +31,6 @@ builds:
 
 archives:
   - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format: tar.xz
-    format_overrides:
-      - goos: windows
-        format: zip
     wrap_in_directory: true
     files:
       - LICENSE
