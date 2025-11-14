@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/konflux-ci/capo/pkg"
@@ -81,7 +82,24 @@ func buildOptsFromArgs(args args) containerfile.BuildOptions {
 	}
 }
 
+func logRevision() {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" {
+				log.Printf("Capo was built from revision %q", s.Value)
+				return
+			}
+		}
+		// vcs.revision is only available after build, "go run" isn't enough
+		log.Println("Could not find key vcs.revision in build information")
+	} else {
+		log.Println("Could not read capo build information")
+	}
+}
+
 func main() {
+	logRevision()
+
 	args, err := parseArgs()
 	if err != nil {
 		log.Fatalf("%v", err)
