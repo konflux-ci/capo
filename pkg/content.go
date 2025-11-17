@@ -75,7 +75,7 @@ func includes(sources []string, path string) bool {
 	}
 
 	for _, src := range sources {
-		if strings.HasPrefix(path, src) {
+		if matched, _ := filepath.Match(src, path); matched || strings.HasPrefix(path, src) {
 			return true
 		}
 	}
@@ -102,30 +102,46 @@ func getImageContent(
 
 	for _, src := range sources {
 		full := path.Join(mountPath, src)
-
-		fInfo, err := os.Stat(full)
-		if os.IsNotExist(err) {
-			// If the path doesn't exist, it's likely intermediate content.
-			// We ignore it and continue looking for content.
+		matches, err := filepath.Glob(full)
+		if err != nil {
 			continue
-		} else if err != nil {
-			return included, fmt.Errorf("%w: failed to stat %q: %w", ErrIO, full, err)
 		}
 
-		dest := path.Join(contentPath, src)
+		if len(matches) == 0 {
+			continue
+		}
 
-		if fInfo.IsDir() {
-			// CopyFS also copies and follows symlinks even if they're outside the specified source,
-			// This is not a problem for us because Syft ignores symbolic links.
-			if err := os.CopyFS(contentPath, os.DirFS(full)); err != nil {
-				return included, fmt.Errorf("%w: failed to copy directory %q: %w", ErrIO, full, err)
+		foundMatch := false
+		for _, match := range matches {
+			fInfo, err := os.Stat(match)
+			if err != nil {
+				continue
 			}
-		} else if fInfo.Mode().IsRegular() {
-			if err := copyFile(full, dest); err != nil {
+
+			relPath, err := filepath.Rel(mountPath, match)
+			if err != nil {
 				return included, err
 			}
+			dest := path.Join(contentPath, relPath)
+
+			if fInfo.IsDir() {
+				// CopyFS also copies and follows symlinks even if they're outside the specified source,
+				// This is not a problem for us because Syft ignores symbolic links.
+				if err := os.CopyFS(dest, os.DirFS(match)); err != nil {
+					return included, err
+				}
+			} else if fInfo.Mode().IsRegular() {
+				if err := copyFile(match, dest); err != nil {
+					return included, err
+				}
+			}
+
+			foundMatch = true
 		}
-		included = append(included, src)
+
+		if foundMatch {
+			included = append(included, src)
+		}
 	}
 
 	return included, err

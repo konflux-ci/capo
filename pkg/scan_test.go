@@ -352,6 +352,103 @@ func TestGetPackageSources(t *testing.T) {
 				},
 			},
 		},
+		"wildcard copy in final stage": {
+			stages: []containerfile.Stage{
+				{
+					Alias:    "builder",
+					Pullspec: "docker.io/library/fedora:latest",
+					Copies:   []containerfile.Copy{},
+				},
+				{
+					Alias:    containerfile.FinalStage,
+					Pullspec: "",
+					Copies: []containerfile.Copy{
+						{
+							From:        "builder",
+							Sources:     []string{"/lib/*.so"},
+							Destination: "/lib/",
+						},
+					},
+				},
+			},
+			expected: []packageSource{
+				{
+					alias:    "builder",
+					pullspec: "docker.io/library/fedora:latest",
+					sources:  []string{"/lib/*.so"},
+				},
+			},
+		},
+		"wildcard traced through multiple stages": {
+			stages: []containerfile.Stage{
+				{
+					Alias:    "builder1",
+					Pullspec: "docker.io/library/fedora:latest",
+					Copies:   []containerfile.Copy{},
+				},
+				{
+					Alias:    "builder2",
+					Pullspec: "docker.io/alpine/helm:latest",
+					Copies: []containerfile.Copy{
+						{
+							From:        "builder1",
+							Sources:     []string{"/usr/lib/*.so"},
+							Destination: "/libs/",
+						},
+					},
+				},
+				{
+					Alias:    containerfile.FinalStage,
+					Pullspec: "",
+					Copies: []containerfile.Copy{
+						{
+							From:        "builder2",
+							Sources:     []string{"/libs/*.so"},
+							Destination: "/lib/",
+						},
+					},
+				},
+			},
+			expected: []packageSource{
+				{
+					alias:    "builder1",
+					pullspec: "docker.io/library/fedora:latest",
+					sources:  []string{"/usr/lib/*.so"},
+				},
+				{
+					alias:    "builder2",
+					pullspec: "docker.io/alpine/helm:latest",
+					sources:  []string{},
+				},
+			},
+		},
+		"mixed wildcards and regular files": {
+			stages: []containerfile.Stage{
+				{
+					Alias:    "builder",
+					Pullspec: "docker.io/library/fedora:latest",
+					Copies:   []containerfile.Copy{},
+				},
+				{
+					Alias:    containerfile.FinalStage,
+					Pullspec: "",
+					Copies: []containerfile.Copy{
+						{
+							From:        "builder",
+							Sources:     []string{"/usr/bin/helm", "/lib/*.so", "/etc/config.txt"},
+							Destination: "/app/",
+						},
+					},
+				},
+			},
+			expected: []packageSource{
+				{
+					alias:    "builder",
+					pullspec: "docker.io/library/fedora:latest",
+					sources:  []string{"/usr/bin/helm", "/lib/*.so", "/etc/config.txt"},
+				},
+			},
+		},
 	}
 
 	for name, test := range tests {

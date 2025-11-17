@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/konflux-ci/capo/internal/sbom"
@@ -181,7 +182,10 @@ func traceSource(
 
 	foundAncestor := false
 	for _, cp := range currStage.Copies {
-		if strings.HasPrefix(cp.Destination, source) {
+		matched, _ := filepath.Match(source, cp.Destination)
+		isDirectoryCopy := strings.HasPrefix(cp.Destination, source)
+		isSourceUnderDestination := strings.HasPrefix(source, cp.Destination)
+		if matched || isDirectoryCopy || isSourceUnderDestination {
 			foundAncestor = true
 			for _, s := range cp.Sources {
 				traceSource(s, aliasToStage[cp.From], acc, aliasToStage)
