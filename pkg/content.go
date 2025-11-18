@@ -104,18 +104,17 @@ func getImageContent(
 		full := path.Join(mountPath, src)
 		matches, err := filepath.Glob(full)
 		if err != nil {
-			continue
+			return included, err
 		}
 
 		if len(matches) == 0 {
 			continue
 		}
 
-		foundMatch := false
 		for _, match := range matches {
 			fInfo, err := os.Stat(match)
 			if err != nil {
-				continue
+				return included, err
 			}
 
 			relPath, err := filepath.Rel(mountPath, match)
@@ -136,11 +135,7 @@ func getImageContent(
 				}
 			}
 
-			foundMatch = true
-		}
-
-		if foundMatch {
-			included = append(included, src)
+			included = append(included, "/"+relPath)
 		}
 	}
 

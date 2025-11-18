@@ -179,6 +179,7 @@ func traceSource(
 	aliasToStage map[string]*containerfile.Stage,
 ) {
 	isDirectory := strings.HasSuffix(source, "/")
+	isWildcard := strings.ContainsAny(source, "*?[]")
 
 	foundAncestor := false
 	for _, cp := range currStage.Copies {
@@ -193,12 +194,10 @@ func traceSource(
 		}
 	}
 
-	// If the source is a directory, we want to add it to the accumulator
-	// even if we traced some of the sources. This is because the directory could
+	// If the source is a directory or wildcard pattern, we want to add it to the accumulator
+	// even if we traced some of the sources. This is because the directory/pattern could
 	// contain mixed content - some from this stage, some copied from previous stages.
-	// This occurs when a builder stage copies content from a previous stage into
-	// an already existing directory with some content.
-	if isDirectory || !foundAncestor {
+	if isDirectory || isWildcard || !foundAncestor {
 		acc[currStage] = append(acc[currStage], source)
 	}
 }
