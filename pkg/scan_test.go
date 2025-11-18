@@ -418,7 +418,7 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:    "builder2",
 					pullspec: "docker.io/alpine/helm:latest",
-					sources:  []string{},
+					sources:  []string{"/libs/*.so"},
 				},
 			},
 		},
