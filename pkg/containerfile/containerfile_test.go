@@ -226,6 +226,7 @@ func TestParse(t *testing.T) {
 							COPY --from=builder /usr/bin/go ./go
 							COPY --from=builder /usr/bin/helm app/
 							COPY --from=builder /usr/bin/syft ..
+							COPY --from=builder /usr/bin/capo ../..
 							COPY --from=builder /usr/bin/oras .`,
 			expected: []Stage{
 				{
@@ -261,6 +262,11 @@ func TestParse(t *testing.T) {
 							From:        "builder",
 							Sources:     []string{"/usr/bin/syft"},
 							Destination: "/usr/",
+						},
+						{
+							From:        "builder",
+							Sources:     []string{"/usr/bin/capo"},
+							Destination: "/",
 						},
 						{
 							From:        "builder",
