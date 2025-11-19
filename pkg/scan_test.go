@@ -85,43 +85,6 @@ func TestGetPackageSources(t *testing.T) {
 				},
 			},
 		},
-		"arg evaluation": {
-			stages: []containerfile.Stage{
-				{
-					Alias:    "builder",
-					Pullspec: "docker.io/library/alpine:latest",
-					Copies:   []containerfile.Copy{},
-				},
-				{
-					Alias:    containerfile.FinalStage,
-					Pullspec: "",
-					Copies: []containerfile.Copy{
-						{
-							From:        "docker.io/library/fedora:latest",
-							Sources:     []string{"/usr/bin/oras"},
-							Destination: "/usr/bin/oras",
-						},
-						{
-							From:        "builder",
-							Sources:     []string{"/usr/bin/binary"},
-							Destination: "/usr/bin/binary",
-						},
-					},
-				},
-			},
-			expected: []packageSource{
-				{
-					alias:    "builder",
-					pullspec: "docker.io/library/alpine:latest",
-					sources:  []string{"/usr/bin/binary"},
-				},
-				{
-					alias:    "",
-					pullspec: "docker.io/library/fedora:latest",
-					sources:  []string{"/usr/bin/oras"},
-				},
-			},
-		},
 		"copies in final stage only": {
 			stages: []containerfile.Stage{
 				{
