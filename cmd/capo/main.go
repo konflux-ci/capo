@@ -39,6 +39,9 @@ func parseArgs() (args, error) {
 			if len(parts) != 2 {
 				return fmt.Errorf("Invalid build arg syntax for %s.", s)
 			}
+			if parts[0] == "" {
+				return fmt.Errorf("Missing key in build arg for %s.", s)
+			}
 			buildArgs[parts[0]] = parts[1]
 			return nil
 		},
