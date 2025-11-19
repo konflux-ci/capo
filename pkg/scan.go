@@ -187,6 +187,8 @@ func traceSource(
 	// If the source is a directory, we want to add it to the accumulator
 	// even if we traced some of the sources. This is because the directory could
 	// contain mixed content - some from this stage, some copied from previous stages.
+	// This occurs when a builder stage copies content from a previous stage into
+	// an already existing directory with some content.
 	if isDirectory || !foundAncestor {
 		acc[currStage] = append(acc[currStage], source)
 	}
