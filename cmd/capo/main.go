@@ -87,6 +87,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Could not open %s: %+v", args.containerfilePath, err)
 	}
+	defer func() {
+		if r.Close() != nil {
+			log.Fatalf("Could not close %s", args.containerfilePath)
+		}
+	}()
 
 	stages, err := containerfile.Parse(r, buildOptsFromArgs(args))
 	if err != nil {
