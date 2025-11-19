@@ -232,9 +232,15 @@ func parseCopy(node *parser.Node, workdir string, env []string) (*Copy, error) {
 				return nil, &WorkdirError{node.Original}
 			}
 
-			var destIsDir = strings.HasSuffix(destination, "/") || destination == "." || destination == ".."
+			_, destFile := filepath.Split(destination)
+			destIsDir := destFile == "" || destFile == ".." || destFile == "."
 			if destIsDir {
-				destination = filepath.Join(workdir, destination) + "/"
+				destination = filepath.Join(workdir, destination)
+
+				// special case: only add trailing slash if not already in root
+				if destination != "/" {
+					destination = destination + "/"
+				}
 			} else {
 				destination = filepath.Join(workdir, destination)
 			}
