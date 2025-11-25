@@ -65,6 +65,8 @@ func IntegrationTest() error {
 	return sh.RunV("buildah", "unshare", "go", "test", "-v", "-tags=integration", "./pkg")
 }
 
+// Creates a new git tag with the specified version and pushes it to origin.
+// Github CI automation then builds the binary and creates a release.
 func Release(version string) error {
 	sh.RunV("git", "tag", version)
 	sh.RunV("git", "push", "origin", version)
