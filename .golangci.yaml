@@ -1,0 +1,16 @@
+---
+version: "2"
+linters:
+  # https://golangci-lint.run/docs/linters/
+  default: standard
+  enable:
+    - decorder
+    - err113
+    - gocognit
+    - lll
+    - makezero
+    - modernize
+    - paralleltest
+    - tparallel
+    - prealloc
+    - wrapcheck

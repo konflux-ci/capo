@@ -49,3 +49,10 @@ install it:
 ```sh
 go install github.com/magefile/mage@latest
 ```
+
+The project also uses
+[golangci-lint](https://github.com/golangci/golangci-lint) to run linters:
+```sh
+curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.6.1
+mage lint
+```

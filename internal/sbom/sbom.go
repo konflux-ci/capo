@@ -2,10 +2,11 @@ package sbom
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/anchore/syft/syft"
 	"github.com/anchore/syft/syft/artifact"
-	"github.com/anchore/syft/syft/format/spdxjson"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/sbom"
 	"github.com/anchore/syft/syft/source/sourceproviders"
@@ -16,13 +17,13 @@ var sourceConfig = syft.DefaultGetSourceConfig().WithSources(sourceproviders.Dir
 
 var createSBOMConfig = syft.DefaultCreateSBOMConfig()
 
-var encoderConfig = spdxjson.DefaultEncoderConfig()
-
 type SyftPackage struct {
 	PURL             string
 	DependencyOfPURL string
 	Checksums        []string
 }
+
+var ErrSyft = errors.New("syft error while scanning content")
 
 // Performs a syft scan on the root directory and returns a slice of SyftPackage structs.
 func SyftScan(root string) ([]SyftPackage, error) {
@@ -30,12 +31,12 @@ func SyftScan(root string) ([]SyftPackage, error) {
 
 	src, err := syft.GetSource(ctx, root, sourceConfig)
 	if err != nil {
-		return []SyftPackage{}, err
+		return []SyftPackage{}, fmt.Errorf("%w: %w", ErrSyft, err)
 	}
 
 	sbom, err := syft.CreateSBOM(ctx, src, createSBOMConfig)
 	if err != nil {
-		return []SyftPackage{}, err
+		return []SyftPackage{}, fmt.Errorf("%w: %w", ErrSyft, err)
 	}
 
 	return getTopLevelPackages(sbom), nil
@@ -44,7 +45,7 @@ func SyftScan(root string) ([]SyftPackage, error) {
 // Get a slice of SyftPackage structs of "top level" packages. These are packages
 // that have a direct CONTAINS relationship from the document root.
 func getTopLevelPackages(sbom *sbom.SBOM) []SyftPackage {
-	var packages []SyftPackage
+	packages := make([]SyftPackage, 0)
 	// collect pkg IDs of packages that are contained directly by the document root
 	topLevelPkgIds := make(map[artifact.ID]bool)
 	for _, rel := range sbom.Relationships {
