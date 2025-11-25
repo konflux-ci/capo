@@ -20,9 +20,6 @@ builds:
       - ppc64le
     goarm:
       - "7"
-    ignore:
-      - goos: darwin
-        goarch: ppc64le
     tags:
       - exclude_graphdriver_btrfs
     hooks:
