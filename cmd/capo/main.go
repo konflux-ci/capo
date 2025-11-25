@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -22,6 +23,10 @@ type args struct {
 	target string
 }
 
+var ErrBuildArg = errors.New("invalid build args syntax")
+var ErrNoContainerfile = errors.New("containerfile argument is required")
+var ErrJSONEncode = errors.New("error while encoding package metadata")
+
 // Define and parse command line arguments and return an "args" struct or an error.
 func parseArgs() (args, error) {
 	cfPath := flag.String(
@@ -37,7 +42,7 @@ func parseArgs() (args, error) {
 		func(s string) error {
 			parts := strings.Split(s, "=")
 			if len(parts) != 2 {
-				return fmt.Errorf("Invalid build arg syntax for %s.", s)
+				return ErrBuildArg
 			}
 			if parts[0] == "" {
 				return fmt.Errorf("Missing key in build arg for %s.", s)
@@ -56,9 +61,8 @@ func parseArgs() (args, error) {
 	flag.Parse()
 
 	if *cfPath == "" {
-		fmt.Fprintln(os.Stderr, "Path to the used Containerfile argument is required.")
 		flag.Usage()
-		return args{}, fmt.Errorf("Error while parsing arguments, exiting.")
+		return args{}, ErrNoContainerfile
 	}
 
 	return args{
@@ -80,7 +84,7 @@ func buildOptsFromArgs(args args) containerfile.BuildOptions {
 func main() {
 	args, err := parseArgs()
 	if err != nil {
-		log.Fatalf("%+v", err)
+		log.Fatalf("%v", err)
 	}
 
 	r, err := os.Open(args.containerfilePath)
@@ -104,16 +108,22 @@ func main() {
 		log.Fatalf("Failed to scan stages: %+v", err)
 	}
 
-	printPkgMetadata(pkgMetadata)
+	if err := printPkgMetadata(pkgMetadata); err != nil {
+		log.Fatalf("Failed to serialize and print package metadata")
+	}
 }
 
 // Serialize and print package metadata to stdout.
-func printPkgMetadata(pkgMetadata capo.PackageMetadata) {
+func printPkgMetadata(pkgMetadata capo.PackageMetadata) error {
 	var buf bytes.Buffer
 
 	encoder := json.NewEncoder(&buf)
 	encoder.SetIndent("", "  ")
-	encoder.Encode(pkgMetadata)
+	err := encoder.Encode(pkgMetadata)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrJSONEncode, err)
+	}
 
 	fmt.Println(buf.String())
+	return nil
 }

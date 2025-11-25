@@ -72,9 +72,8 @@ func TestParseInvalidRelativePaths(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			reader := strings.NewReader(test.containerfile)
-			var we *WorkdirError
 			_, err := Parse(reader, BuildOptions{})
-			if !errors.As(err, &we) {
+			if !errors.Is(err, ErrAmbiguousRelativePath) {
 				t.Fatalf("Parse didn't return WorkdirError when expected, actual: %v", err)
 			}
 		})

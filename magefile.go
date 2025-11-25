@@ -3,6 +3,8 @@
 package main
 
 import (
+	"strings"
+
 	"github.com/magefile/mage/sh"
 )
 
@@ -10,9 +12,18 @@ var Default = Build
 var CapoPackage = "./cmd/capo"
 
 // Runs the capo module in a buildah namespace using 'buildah unshare'.
-// Passes args to capo.
-func Run(args string) error {
-	return sh.RunV("buildah", "unshare", "go", "run", CapoPackage, args)
+// Passes args to capo. Capo arguments must be passed as a single string:
+// $ mage run '--containerfile=Containerfile --build-arg=KEY=value'
+func Run(capoArgsStr string) error {
+	capoArgs := strings.Split(capoArgsStr, " ")
+	bArgs := []string{
+		"unshare",
+		"go",
+		"run",
+		CapoPackage,
+	}
+	bArgs = append(bArgs, capoArgs...)
+	return sh.RunV("buildah", bArgs...)
 }
 
 // Runs 'go mod download' and then installs the capo binary.
@@ -38,14 +49,15 @@ func Format() error {
 	return sh.Run("go", "fmt", "./...")
 }
 
-// Runs 'go vet'
-func Vet() error {
-	return sh.Run("go", "vet", "./...")
-}
-
 // Runs 'go mod tidy' to remove unneeded dependencies.
 func Tidy() error {
 	return sh.Run("go", "mod", "tidy")
+}
+
+// Runs golangci-lint to perform static code analysis and linting.
+// golangci-lint uses the config in .golangci.yaml
+func Lint() error {
+	return sh.RunV("golangci-lint", "run")
 }
 
 // Runs checks on the code and creates the specified git tag.

@@ -6,6 +6,7 @@ package capo
 
 import (
 	"archive/tar"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -17,6 +18,11 @@ import (
 	"go.podman.io/storage"
 	"go.podman.io/storage/pkg/archive"
 )
+
+var ErrImageNotFound = errors.New("could not find image in buildah storage")
+var ErrImageMount = errors.New("could not mount image")
+var ErrIO = errors.New("IO operation failed")
+var ErrStorage = errors.New("storage operation failed")
 
 // Uses the container store to returns a struct containing absolute paths to
 // partial content for the specified pullspec.
@@ -39,7 +45,7 @@ func getContent(
 ) error {
 	imgId, err := store.Lookup(pkgSource.pullspec)
 	if err != nil {
-		return fmt.Errorf("Could not find image: %s in buildah storage.", pkgSource.pullspec)
+		return fmt.Errorf("%w: %q", ErrImageNotFound, pkgSource.pullspec)
 	}
 	img, _ := store.Image(imgId)
 
@@ -85,9 +91,14 @@ func getImageContent(
 ) (included []string, err error) {
 	mountPath, err := store.MountImage(image.ID, []string{}, "")
 	if err != nil {
-		return included, err
+		return included, fmt.Errorf("%w: %w", ErrImageMount, err)
 	}
-	defer store.UnmountImage(image.ID, false)
+
+	defer func() {
+		if _, unmountErr := store.UnmountImage(image.ID, false); unmountErr != nil {
+			err = fmt.Errorf("%w: failed to unmount image: %w", ErrStorage, unmountErr)
+		}
+	}()
 
 	for _, src := range sources {
 		full := path.Join(mountPath, src)
@@ -98,7 +109,7 @@ func getImageContent(
 			// We ignore it and continue looking for content.
 			continue
 		} else if err != nil {
-			return included, err
+			return included, fmt.Errorf("%w: failed to stat %q: %w", ErrIO, full, err)
 		}
 
 		dest := path.Join(contentPath, src)
@@ -107,7 +118,7 @@ func getImageContent(
 			// CopyFS also copies and follows symlinks even if they're outside the specified source,
 			// This is not a problem for us because Syft ignores symbolic links.
 			if err := os.CopyFS(contentPath, os.DirFS(full)); err != nil {
-				return included, err
+				return included, fmt.Errorf("%w: failed to copy directory %q: %w", ErrIO, full, err)
 			}
 		} else if fInfo.Mode().IsRegular() {
 			if err := copyFile(full, dest); err != nil {
@@ -120,24 +131,30 @@ func getImageContent(
 	return included, err
 }
 
-func copyFile(src string, dest string) error {
+func copyFile(src string, dest string) (err error) {
 	reader, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: failed to open file %q: %w", ErrIO, src, err)
 	}
-	defer reader.Close()
+	defer func() {
+		err = reader.Close()
+	}()
 
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-		return err
+		return fmt.Errorf("%w: failed to create directory %q: %w", ErrIO, filepath.Dir(dest), err)
 	}
 	writer, err := os.Create(dest)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: failed to create file %q: %w", ErrIO, dest, err)
 	}
-	defer writer.Close()
+	defer func() {
+		err = writer.Close()
+	}()
 
-	_, err = io.Copy(writer, reader)
-	return err
+	if _, err = io.Copy(writer, reader); err != nil {
+		return fmt.Errorf("%w: failed to copy file content: %w", ErrIO, err)
+	}
+	return nil
 }
 
 // Stores intermediate content for the specified image to the path directory.
@@ -161,7 +178,7 @@ func getIntermediateContent(
 ) ([]string, error) {
 	builderLayer, err := store.Layer(builderImage.TopLayer)
 	if err != nil {
-		return []string{}, err
+		return []string{}, fmt.Errorf("%w: failed to get builder layer: %w", ErrStorage, err)
 	}
 
 	interLayer, err := getLastIntermediateLayer(store, builderLayer)
@@ -183,7 +200,7 @@ func getIntermediateContent(
 func getIntermediateLayers(store storage.Store, builderLayer *storage.Layer) ([]*storage.Layer, error) {
 	images, err := store.Images()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: failed to list images: %w", ErrStorage, err)
 	}
 
 	var candidates []*storage.Layer
@@ -202,14 +219,11 @@ func getIntermediateLayers(store storage.Store, builderLayer *storage.Layer) ([]
 
 		imgTopLayer, err := store.Layer(img.TopLayer)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: failed to get image top layer: %w", ErrStorage, err)
 		}
 
 		layerId := img.TopLayer
-		for {
-			if layerId == "" {
-				break
-			}
+		for layerId != "" {
 			if layerId == builderLayer.ID {
 				candidates = append(candidates, imgTopLayer)
 				break
@@ -217,7 +231,7 @@ func getIntermediateLayers(store storage.Store, builderLayer *storage.Layer) ([]
 
 			layer, err := store.Layer(layerId)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%w: failed to get layer: %w", ErrStorage, err)
 			}
 
 			layerId = layer.Parent
@@ -245,17 +259,10 @@ func getLastIntermediateLayer(store storage.Store, builderLayer *storage.Layer) 
 		depth := 0
 		layerId := candidate.ID
 
-		for {
-			if layerId == "" {
-				break
-			}
-			if layerId == builderLayer.ID {
-				break
-			}
-
+		for layerId != "" && layerId != builderLayer.ID {
 			layer, err := store.Layer(layerId)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%w: failed to get layer in chain: %w", ErrStorage, err)
 			}
 
 			depth++
@@ -277,7 +284,7 @@ func saveDiff(
 	layerId string,
 	parentId string,
 	sources []string,
-) ([]string, error) {
+) (included []string, err error) {
 	compression := archive.Uncompressed
 	opts := storage.DiffOptions{
 		Compression: &compression,
@@ -285,11 +292,13 @@ func saveDiff(
 
 	diff, err := store.Diff(parentId, layerId, &opts)
 	if err != nil {
-		return []string{}, err
+		return []string{}, fmt.Errorf("%w: failed to compute layer diff: %w", ErrStorage, err)
 	}
-	defer diff.Close()
+	defer func() {
+		err = diff.Close()
+	}()
 
-	included := make([]string, 0, 16)
+	included = make([]string, 0, 16)
 	reader := tar.NewReader(diff)
 	for {
 		header, err := reader.Next()
@@ -297,7 +306,7 @@ func saveDiff(
 			break
 		}
 		if err != nil {
-			return []string{}, err
+			return []string{}, fmt.Errorf("%w: failed to read tar header: %w", ErrIO, err)
 		}
 
 		if !includes(sources, header.Name) {
@@ -311,23 +320,23 @@ func saveDiff(
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0755); err != nil {
-				return []string{}, err
+				return []string{}, fmt.Errorf("%w: failed to create directory %q: %w", ErrIO, target, err)
 			}
 		case tar.TypeReg:
 			// sometimes the archive does not have headers for directories
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				return []string{}, err
+				return []string{}, fmt.Errorf("%w: failed to create directory %q: %w", ErrIO, filepath.Dir(target), err)
 			}
 			f, err := os.Create(target)
 			if err != nil {
-				return []string{}, err
+				return []string{}, fmt.Errorf("%w: failed to create file %q: %w", ErrIO, target, err)
 			}
 
 			if _, err := io.Copy(f, reader); err != nil {
-				f.Close()
-				return []string{}, err
+				_ = f.Close()
+				return []string{}, fmt.Errorf("%w: failed to copy file content: %w", ErrIO, err)
 			}
-			f.Close()
+			_ = f.Close()
 		}
 	}
 
