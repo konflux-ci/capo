@@ -1,4 +1,3 @@
-//go:build exclude_graphdriver_btrfs
 module github.com/konflux-ci/capo
 
 require (
