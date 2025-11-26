@@ -1,7 +1,7 @@
 ---
 version: "2"
 run:
-  # Use the same build tags that are used in go.mod
+  # Use the same build tags that are used in magefile.go
   build-tags:
     - exclude_graphdriver_btrfs
 linters:
