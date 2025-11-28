@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/openshift/imagebuilder"
@@ -12,6 +13,13 @@ import (
 )
 
 var FinalStage string = ""
+
+type CopyType int
+
+const (
+	CopyTypeBuilder CopyType = iota
+	CopyTypeExternal
+)
 
 // A builder-type COPY command in a Containerfile stage.
 // A COPY is builder-type if it copies from a previous builder stage
@@ -21,9 +29,12 @@ type Copy struct {
 	Sources []string
 	// Destination in the command.
 	Destination string
-	// Alias of the stage the command is copying from in the case
-	// of stage copies or a pullspec when copying directly from an image.
+	// Alias of the stage the command is copying from when Copy.Type==CopyTypeBuilder
+	// or a pullspec when Copy.Type==CopyTypeExternal
 	From string
+	// Type of the COPY. Specifies whether it is a copy from a builder stage
+	// or an external image directly.
+	Type CopyType
 }
 
 // A builder or final stage in a Containerfile
@@ -79,20 +90,21 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 	}
 
 	aliasToPullspec := mapAliasesToPullspecs(rawStages)
+	stageNames := make([]string, 0)
 
 	for i, s := range rawStages {
-		stageName := s.Name
+		stageNames = append(stageNames, s.Name)
 		if i == len(rawStages)-1 {
-			stageName = FinalStage
+			s.Name = FinalStage
 		}
 
-		copies, err := getBuilderCopiesInStage(s)
+		copies, err := getBuilderCopiesInStage(s, stageNames)
 		if err != nil {
 			return res, err
 		}
 
 		res = append(res, Stage{
-			Alias:    stageName,
+			Alias:    s.Name,
 			Pullspec: aliasToPullspec[s.Name],
 			Copies:   copies,
 		})
@@ -134,6 +146,8 @@ func mapAliasesToPullspecs(stages []imagebuilder.Stage) map[string]string {
 // present in that stage.
 // A COPY command is builder-type if the "--from" flag is specified and it copies from
 // a builder stage or directly from an image.
+// Uses the passed previouse stageNames to specify whether copies are from a stage
+// or directly from an image.
 //
 // WORKDIR commands are taken into account and the destinations of COPY commands
 // are resolved to be absolute instead of relative, where needed. If the Containerfile
@@ -143,7 +157,7 @@ func mapAliasesToPullspecs(stages []imagebuilder.Stage) map[string]string {
 // be determined based on just the Containerfile.
 //
 // WARNING: named contexts in the Containerfile are not supported
-func getBuilderCopiesInStage(s imagebuilder.Stage) ([]Copy, error) {
+func getBuilderCopiesInStage(s imagebuilder.Stage, stageNames []string) ([]Copy, error) {
 	copies := make([]Copy, 0)
 	workdir := ""
 	headingEnv := argsMapToSlice(s.Builder.HeadingArgs)
@@ -170,7 +184,7 @@ func getBuilderCopiesInStage(s imagebuilder.Stage) ([]Copy, error) {
 			}
 
 		case "copy":
-			cp, err := parseCopy(child, workdir, env)
+			cp, err := parseCopy(child, workdir, env, stageNames)
 			if err != nil {
 				return copies, err
 			}
@@ -189,7 +203,9 @@ func getBuilderCopiesInStage(s imagebuilder.Stage) ([]Copy, error) {
 // Returns (nil, nil) if the COPY command is not builder-type, but copies from a context.
 // Uses the passed workdir to resolve relative paths in the COPY's destination to absolute.
 // Uses the passed env to evaluate arguments in the COPY.
-func parseCopy(node *parser.Node, workdir string, env []string) (*Copy, error) {
+// Uses the passed previous stage names to evaluate whether this COPY command is from
+// a builder stage or directly from an external image.
+func parseCopy(node *parser.Node, workdir string, env []string, stageNames []string) (*Copy, error) {
 	for _, fl := range node.Flags {
 		// TODO: When the "--from" flag is included, this is a COPY either from a builder stage,
 		// an external image or a named context. We assume that named contexts aren't used,
@@ -233,10 +249,16 @@ func parseCopy(node *parser.Node, workdir string, env []string) (*Copy, error) {
 			}
 		}
 
+		cpType := CopyTypeBuilder
+		if !slices.Contains(stageNames, from) {
+			cpType = CopyTypeExternal
+		}
+
 		return &Copy{
 			From:        from,
 			Sources:     sources,
 			Destination: destination,
+			Type:        cpType,
 		}, nil
 	}
 
