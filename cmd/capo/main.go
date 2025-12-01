@@ -42,7 +42,7 @@ func parseArgs() (args, error) {
 		"Build argument passed to buildah in the form KEY=VALUE. Can be used multiple times.",
 		func(s string) error {
 			parts := strings.Split(s, "=")
-			if len(parts) != 2  || parts[0] == ""{
+			if len(parts) != 2 || parts[0] == "" {
 				return ErrBuildArg
 			}
 			buildArgs[parts[0]] = parts[1]
