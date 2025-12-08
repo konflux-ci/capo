@@ -146,7 +146,7 @@ func mapAliasesToPullspecs(stages []imagebuilder.Stage) map[string]string {
 // present in that stage.
 // A COPY command is builder-type if the "--from" flag is specified and it copies from
 // a builder stage or directly from an image.
-// Uses the passed previouse stageNames to specify whether copies are from a stage
+// Uses the passed previous stageNames to specify whether copies are from a stage
 // or directly from an image.
 //
 // WORKDIR commands are taken into account and the destinations of COPY commands
