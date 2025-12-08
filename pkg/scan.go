@@ -132,7 +132,9 @@ func resolvePullspecs(store storage.Store, stages []containerfile.Stage) (map[st
 
 			res[stage.Pullspec] = resolved
 		}
+	}
 
+	for _, stage := range stages {
 		for _, cp := range stage.Copies {
 			if cp.Type == containerfile.CopyTypeBuilder {
 				continue
