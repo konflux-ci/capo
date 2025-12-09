@@ -104,7 +104,7 @@ func getImageContent(
 		full := path.Join(mountPath, src)
 		matches, err := filepath.Glob(full)
 		if err != nil {
-			return included, err
+			return included, fmt.Errorf("%w: failed to glob pattern %q: %w", ErrIO, src, err)
 		}
 
 		if len(matches) == 0 {
@@ -114,12 +114,12 @@ func getImageContent(
 		for _, match := range matches {
 			fInfo, err := os.Stat(match)
 			if err != nil {
-				return included, err
+				return included, fmt.Errorf("%w: failed to stat %q: %w", ErrIO, match, err)
 			}
 
 			relPath, err := filepath.Rel(mountPath, match)
 			if err != nil {
-				return included, err
+				return included, fmt.Errorf("%w: failed to get relative path for %q: %w", ErrIO, match, err)
 			}
 			dest := path.Join(contentPath, relPath)
 
@@ -127,7 +127,7 @@ func getImageContent(
 				// CopyFS also copies and follows symlinks even if they're outside the specified source,
 				// This is not a problem for us because Syft ignores symbolic links.
 				if err := os.CopyFS(dest, os.DirFS(match)); err != nil {
-					return included, err
+					return included, fmt.Errorf("%w: failed to copy directory %q to %q: %w", ErrIO, match, dest, err)
 				}
 			} else if fInfo.Mode().IsRegular() {
 				if err := copyFile(match, dest); err != nil {
