@@ -62,7 +62,15 @@ func Lint() error {
 
 // Builds all test images and runs the integration test.
 func IntegrationTest() error {
-	return sh.RunV("buildah", "unshare", "go", "test", "-v", "-tags=integration", "./pkg")
+	return sh.RunV(
+		"buildah",
+		"unshare",
+		"go",
+		"test",
+		"-v",
+		"-tags=integration,exclude_graphdriver_btrfs",
+		"./pkg",
+	)
 }
 
 // Creates a new git tag with the specified version and pushes it to origin.
