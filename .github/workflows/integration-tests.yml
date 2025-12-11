@@ -1,0 +1,34 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Install buildah
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y buildah
+
+    - name: Install mage
+      run: go install github.com/magefile/mage@latest
+
+    - name: Download dependencies
+      run: mage tidy
+
+    - name: Run integration tests
+      run: |
+        mage IntegrationTest
