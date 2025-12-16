@@ -35,7 +35,7 @@ func comparePackageSources(a, b []packageSource) bool {
 
 // packageSourceEqual compares two packageSource structs
 func packageSourceEqual(a, b packageSource) bool {
-	if a.alias != b.alias || a.pullspec != b.pullspec {
+	if a.alias != b.alias || a.pullspec != b.pullspec || a.digestPullspec != b.digestPullspec {
 		return false
 	}
 
@@ -55,8 +55,9 @@ func packageSourceEqual(a, b packageSource) bool {
 func TestGetPackageSources(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
-		stages   []containerfile.Stage
-		expected []packageSource
+		stages            []containerfile.Stage
+		resolvedPullspecs map[string]string
+		expected          []packageSource
 	}{
 		"only external copy in final": {
 			stages: []containerfile.Stage{
@@ -68,15 +69,20 @@ func TestGetPackageSources(t *testing.T) {
 							From:        "docker.io/library/fedora:latest",
 							Sources:     []string{"/usr/bin/oras"},
 							Destination: "/usr/bin/oras",
+							Type:        containerfile.CopyTypeExternal,
 						},
 					},
 				},
 			},
+			resolvedPullspecs: map[string]string{
+				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:abc123",
+			},
 			expected: []packageSource{
 				{
-					alias:    "",
-					pullspec: "docker.io/library/fedora:latest",
-					sources:  []string{"/usr/bin/oras"},
+					alias:          "",
+					pullspec:       "docker.io/library/fedora:latest",
+					digestPullspec: "docker.io/library/fedora@sha256:abc123",
+					sources:        []string{"/usr/bin/oras"},
 				},
 			},
 		},
@@ -100,25 +106,33 @@ func TestGetPackageSources(t *testing.T) {
 							From:        "builder1",
 							Sources:     []string{"/usr/bin/oras"},
 							Destination: "/usr/bin/oras",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 						{
 							From:        "builder2",
 							Sources:     []string{"/usr/bin/helm"},
 							Destination: "/usr/bin/helm",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 					},
 				},
 			},
+			resolvedPullspecs: map[string]string{
+				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:def456",
+				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:ghi789",
+			},
 			expected: []packageSource{
 				{
-					alias:    "builder1",
-					pullspec: "docker.io/library/fedora:latest",
-					sources:  []string{"/usr/bin/oras"},
+					alias:          "builder1",
+					pullspec:       "docker.io/library/fedora:latest",
+					digestPullspec: "docker.io/library/fedora@sha256:def456",
+					sources:        []string{"/usr/bin/oras"},
 				},
 				{
-					alias:    "builder2",
-					pullspec: "docker.io/alpine/helm:latest",
-					sources:  []string{"/usr/bin/helm"},
+					alias:          "builder2",
+					pullspec:       "docker.io/alpine/helm:latest",
+					digestPullspec: "docker.io/alpine/helm@sha256:ghi789",
+					sources:        []string{"/usr/bin/helm"},
 				},
 			},
 		},
@@ -137,6 +151,7 @@ func TestGetPackageSources(t *testing.T) {
 							From:        "builder1",
 							Sources:     []string{"/usr/bin/oras"},
 							Destination: "/usr/bin/oras",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 					},
 				},
@@ -148,20 +163,27 @@ func TestGetPackageSources(t *testing.T) {
 							From:        "builder2",
 							Sources:     []string{"/usr/bin/oras"},
 							Destination: "/usr/bin/oras",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 					},
 				},
 			},
+			resolvedPullspecs: map[string]string{
+				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:jkl012",
+				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:mno345",
+			},
 			expected: []packageSource{
 				{
-					alias:    "builder1",
-					pullspec: "docker.io/library/fedora:latest",
-					sources:  []string{"/usr/bin/oras"},
+					alias:          "builder1",
+					pullspec:       "docker.io/library/fedora:latest",
+					digestPullspec: "docker.io/library/fedora@sha256:jkl012",
+					sources:        []string{"/usr/bin/oras"},
 				},
 				{
-					alias:    "builder2",
-					pullspec: "docker.io/alpine/helm:latest",
-					sources:  []string{},
+					alias:          "builder2",
+					pullspec:       "docker.io/alpine/helm:latest",
+					digestPullspec: "docker.io/alpine/helm@sha256:mno345",
+					sources:        []string{},
 				},
 			},
 		},
@@ -180,6 +202,7 @@ func TestGetPackageSources(t *testing.T) {
 							From:        "builder1",
 							Sources:     []string{"/usr/bin/oras"},
 							Destination: "/usr/bin/oras",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 					},
 				},
@@ -191,20 +214,27 @@ func TestGetPackageSources(t *testing.T) {
 							From:        "builder2",
 							Sources:     []string{"/usr/bin/oras", "/usr/bin/helm"},
 							Destination: "/app/",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 					},
 				},
 			},
+			resolvedPullspecs: map[string]string{
+				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:pqr678",
+				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:stu901",
+			},
 			expected: []packageSource{
 				{
-					alias:    "builder1",
-					pullspec: "docker.io/library/fedora:latest",
-					sources:  []string{"/usr/bin/oras"},
+					alias:          "builder1",
+					pullspec:       "docker.io/library/fedora:latest",
+					digestPullspec: "docker.io/library/fedora@sha256:pqr678",
+					sources:        []string{"/usr/bin/oras"},
 				},
 				{
-					alias:    "builder2",
-					pullspec: "docker.io/alpine/helm:latest",
-					sources:  []string{"/usr/bin/helm"},
+					alias:          "builder2",
+					pullspec:       "docker.io/alpine/helm:latest",
+					digestPullspec: "docker.io/alpine/helm@sha256:stu901",
+					sources:        []string{"/usr/bin/helm"},
 				},
 			},
 		},
@@ -223,11 +253,13 @@ func TestGetPackageSources(t *testing.T) {
 							From:        "builder1",
 							Sources:     []string{"/usr/bin/oras"},
 							Destination: "/app/oras",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 						{
 							From:        "builder1",
 							Sources:     []string{"/bin/*"},
 							Destination: "/app/",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 					},
 				},
@@ -239,20 +271,27 @@ func TestGetPackageSources(t *testing.T) {
 							From:        "builder2",
 							Sources:     []string{"/app/"},
 							Destination: "/app/",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 					},
 				},
 			},
+			resolvedPullspecs: map[string]string{
+				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:vwx234",
+				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:yza567",
+			},
 			expected: []packageSource{
 				{
-					alias:    "builder1",
-					pullspec: "docker.io/library/fedora:latest",
-					sources:  []string{"/usr/bin/oras", "/bin/*"},
+					alias:          "builder1",
+					pullspec:       "docker.io/library/fedora:latest",
+					digestPullspec: "docker.io/library/fedora@sha256:vwx234",
+					sources:        []string{"/usr/bin/oras", "/bin/*"},
 				},
 				{
-					alias:    "builder2",
-					pullspec: "docker.io/alpine/helm:latest",
-					sources:  []string{"/app/"},
+					alias:          "builder2",
+					pullspec:       "docker.io/alpine/helm:latest",
+					digestPullspec: "docker.io/alpine/helm@sha256:yza567",
+					sources:        []string{"/app/"},
 				},
 			},
 		},
@@ -271,6 +310,7 @@ func TestGetPackageSources(t *testing.T) {
 							From:        "builder1",
 							Sources:     []string{"/usr/bin/wget"},
 							Destination: "/usr/bin/wget",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 					},
 				},
@@ -282,20 +322,27 @@ func TestGetPackageSources(t *testing.T) {
 							From:        "builder2",
 							Sources:     []string{"/app/"},
 							Destination: "/app/",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 					},
 				},
 			},
+			resolvedPullspecs: map[string]string{
+				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:bcd890",
+				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:efg123",
+			},
 			expected: []packageSource{
 				{
-					alias:    "builder1",
-					pullspec: "docker.io/library/fedora:latest",
-					sources:  []string{},
+					alias:          "builder1",
+					pullspec:       "docker.io/library/fedora:latest",
+					digestPullspec: "docker.io/library/fedora@sha256:bcd890",
+					sources:        []string{},
 				},
 				{
-					alias:    "builder2",
-					pullspec: "docker.io/alpine/helm:latest",
-					sources:  []string{"/app/"},
+					alias:          "builder2",
+					pullspec:       "docker.io/alpine/helm:latest",
+					digestPullspec: "docker.io/alpine/helm@sha256:efg123",
+					sources:        []string{"/app/"},
 				},
 			},
 		},
@@ -314,6 +361,7 @@ func TestGetPackageSources(t *testing.T) {
 							From:        "builder1",
 							Sources:     []string{"/usr/bin/kubectl"},
 							Destination: "/tools/kubectl",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 					},
 				},
@@ -325,30 +373,39 @@ func TestGetPackageSources(t *testing.T) {
 							From:        "builder1",
 							Sources:     []string{"/lib/libc.so"},
 							Destination: "/lib/libc.so",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 						{
 							From:        "builder2",
 							Sources:     []string{"/tools/"},
 							Destination: "/usr/bin/",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 						{
 							From:        "builder2",
 							Sources:     []string{"/usr/bin/helm"},
 							Destination: "/usr/bin/helm",
+							Type:        containerfile.CopyTypeBuilder,
 						},
 					},
 				},
 			},
+			resolvedPullspecs: map[string]string{
+				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:hij456",
+				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:klm789",
+			},
 			expected: []packageSource{
 				{
-					alias:    "builder1",
-					pullspec: "docker.io/library/fedora:latest",
-					sources:  []string{"/lib/libc.so", "/usr/bin/kubectl"},
+					alias:          "builder1",
+					pullspec:       "docker.io/library/fedora:latest",
+					digestPullspec: "docker.io/library/fedora@sha256:hij456",
+					sources:        []string{"/lib/libc.so", "/usr/bin/kubectl"},
 				},
 				{
-					alias:    "builder2",
-					pullspec: "docker.io/alpine/helm:latest",
-					sources:  []string{"/tools/", "/usr/bin/helm"},
+					alias:          "builder2",
+					pullspec:       "docker.io/alpine/helm:latest",
+					digestPullspec: "docker.io/alpine/helm@sha256:klm789",
+					sources:        []string{"/tools/", "/usr/bin/helm"},
 				},
 			},
 		},
@@ -454,7 +511,10 @@ func TestGetPackageSources(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			actual := getPackageSources(test.stages)
+			actual, err := getPackageSources(test.stages, test.resolvedPullspecs)
+			if err != nil {
+				t.Fatalf("getPackageSources returned error: %v", err)
+			}
 
 			if !comparePackageSources(actual, test.expected) {
 				t.Fatalf("actual package sources %+v, don't match the expected %+v", actual, test.expected)

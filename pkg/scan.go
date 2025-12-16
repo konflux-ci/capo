@@ -11,6 +11,7 @@ import (
 	"github.com/konflux-ci/capo/internal/sbom"
 	"github.com/konflux-ci/capo/pkg/containerfile"
 
+	"go.podman.io/image/v5/docker/reference"
 	"go.podman.io/storage"
 	"go.podman.io/storage/pkg/reexec"
 )
@@ -21,8 +22,11 @@ type packageSource struct {
 	// only in the form of 'COPY --from=image:tag ... ...'.
 	alias string
 
-	// pullspec of this stage.
+	// Pullspec of this stage as it appeared in the containerfile.
 	pullspec string
+
+	// Pullspec of this stage with digest instead of tag.
+	digestPullspec string
 
 	// Slice of paths to content in the layer/image which should be syft-scanned
 	sources []string
@@ -47,7 +51,7 @@ type PackageMetadataItem struct {
 	// Type of origin of this package, can be "builder" or "intermediate".
 	OriginType string `json:"origin_type"`
 
-	// Pullspec of the image which is this package's origin.
+	// Pullspec of the image with digest which is this package's origin.
 	Pullspec string `json:"pullspec"`
 
 	// Alias of the stage of this package's origin.
@@ -56,6 +60,7 @@ type PackageMetadataItem struct {
 }
 
 var ErrStorageSetup = errors.New("error while setting up buildah storage")
+var ErrPullspecResolve = errors.New("failed to resolve pullspec")
 
 func SetupStore() (storage.Store, error) {
 	// The containers/storage library requires this to run for some operations
@@ -92,7 +97,16 @@ func Scan(
 		return PackageMetadata{}, err
 	}
 
-	for _, pkgSource := range getPackageSources(stages) {
+	resolvedPullspecs, err := resolvePullspecs(store, stages)
+	if err != nil {
+		return PackageMetadata{}, err
+	}
+
+	pkgSources, err := getPackageSources(stages, resolvedPullspecs)
+	if err != nil {
+		return PackageMetadata{}, err
+	}
+	for _, pkgSource := range pkgSources {
 		stagePkgItems, err := scanSource(store, pkgSource)
 		if err != nil {
 			return PackageMetadata{}, fmt.Errorf("failed to scan source %+v with error: %w", pkgSource, err)
@@ -104,9 +118,74 @@ func Scan(
 	return res, nil
 }
 
+// resolvePullspecs uses the containers store to create a mapping between pullspecs
+// used in the containerfile and pullspecs with resolved digest instead of tags.
+// Resolved pullspecs in base images of stages and --from flags in copies within stages.
+func resolvePullspecs(store storage.Store, stages []containerfile.Stage) (map[string]string, error) {
+	res := make(map[string]string)
+
+	for _, stage := range stages[:len(stages)-1] {
+		if _, ok := res[stage.Pullspec]; !ok {
+			resolved, err := resolvePullspec(store, stage.Pullspec)
+			if err != nil {
+				return nil, err
+			}
+
+			res[stage.Pullspec] = resolved
+		}
+	}
+
+	for _, stage := range stages {
+		for _, cp := range stage.Copies {
+			if cp.Type == containerfile.CopyTypeBuilder {
+				continue
+			}
+
+			resolved, err := resolvePullspec(store, cp.From)
+			if err != nil {
+				return nil, err
+			}
+
+			res[cp.From] = resolved
+		}
+	}
+
+	return res, nil
+}
+
+// resolvePullspec uses the passed containers store to resolve a pullspec from a containerfile
+// into a pullspec with digest without tag.
+func resolvePullspec(store storage.Store, pullspec string) (string, error) {
+	id, err := store.Lookup(pullspec)
+	if err != nil {
+		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
+	}
+
+	img, err := store.Image(id)
+	if err != nil {
+		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
+	}
+
+	ref, err := reference.ParseNamed(pullspec)
+	if err != nil {
+		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
+	}
+
+	// remove tags if present add the digest
+	final, err := reference.WithDigest(reference.TrimNamed(ref), img.Digest)
+	if err != nil {
+		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
+	}
+
+	return final.String(), nil
+}
+
 // getPackageSources uses the passed containerfile stages and returns a slice of
 // packageSource structs, specifying which COPY-ied content originates from which builder stage.
-func getPackageSources(stages []containerfile.Stage) []packageSource {
+func getPackageSources(
+	stages []containerfile.Stage,
+	resolvedPullspecs map[string]string,
+) ([]packageSource, error) {
 	res := make([]packageSource, 0)
 	aliasToStage := make(map[string]*containerfile.Stage)
 
@@ -142,10 +221,18 @@ func getPackageSources(stages []containerfile.Stage) []packageSource {
 	// construct builder package sources
 	for i := range stages[:len(stages)-1] {
 		stage := &stages[i]
+
+		digestPullspec, ok := resolvedPullspecs[stage.Pullspec]
+		if !ok {
+			return []packageSource{},
+				fmt.Errorf("%w %q: could not find resolved pullspec", ErrPullspecResolve, stage.Pullspec)
+		}
+
 		res = append(res, packageSource{
-			alias:    stage.Alias,
-			pullspec: stage.Pullspec,
-			sources:  stageToSources[stage],
+			alias:          stage.Alias,
+			pullspec:       stage.Pullspec,
+			digestPullspec: digestPullspec,
+			sources:        stageToSources[stage],
 		})
 
 		// the processed stage must be deleted from stageToSources so it only
@@ -155,15 +242,22 @@ func getPackageSources(stages []containerfile.Stage) []packageSource {
 	}
 
 	// construct external package sources
-	for st, sources := range stageToSources {
+	for stage, sources := range stageToSources {
+		digestPullspec, ok := resolvedPullspecs[stage.Pullspec]
+		if !ok {
+			return []packageSource{},
+				fmt.Errorf("%w %q: could not find resolved pullspec", ErrPullspecResolve, stage.Pullspec)
+		}
+
 		res = append(res, packageSource{
-			alias:    st.Alias,
-			pullspec: st.Pullspec,
-			sources:  sources,
+			alias:          stage.Alias,
+			pullspec:       stage.Pullspec,
+			digestPullspec: digestPullspec,
+			sources:        sources,
 		})
 	}
 
-	return res
+	return res, nil
 }
 
 // traceSource takes a source path and the stage it was found in and recursively
@@ -205,7 +299,10 @@ func traceSource(
 // scanSource uses the passed initialized storage.Store struct to syft scan content
 // from the passed packageSource. Returns a slice of PackageMetadataItem structs specifying
 // origins of packages.
-func scanSource(store storage.Store, pkgSource packageSource) (_ []PackageMetadataItem, err error) {
+func scanSource(
+	store storage.Store,
+	pkgSource packageSource,
+) (_ []PackageMetadataItem, err error) {
 	// builder content is content that is present in a builder stage base image
 	builderContentPath, err := os.MkdirTemp("", "")
 	if err != nil {
@@ -246,7 +343,9 @@ func scanSource(store storage.Store, pkgSource packageSource) (_ []PackageMetada
 		return nil, fmt.Errorf("failed to scan builder content: %w", err)
 	}
 
-	return getPackageMetadata(pkgSource, builderPkgs, intermediatePkgs), nil
+	return getPackageMetadata(
+		pkgSource, builderPkgs, intermediatePkgs,
+	), nil
 }
 
 // getPackageMetadata uses the passed packageSource and its builder and intermediate
@@ -260,7 +359,7 @@ func getPackageMetadata(
 
 	for _, bpkg := range builderPkgs {
 		res = append(res, PackageMetadataItem{
-			Pullspec:         pkgSource.pullspec,
+			Pullspec:         pkgSource.digestPullspec,
 			StageAlias:       pkgSource.alias,
 			PackageURL:       bpkg.PURL,
 			DependencyOfPURL: bpkg.DependencyOfPURL,
@@ -271,7 +370,7 @@ func getPackageMetadata(
 
 	for _, ipkg := range intermediatePkgs {
 		res = append(res, PackageMetadataItem{
-			Pullspec:         pkgSource.pullspec,
+			Pullspec:         pkgSource.digestPullspec,
 			StageAlias:       pkgSource.alias,
 			PackageURL:       ipkg.PURL,
 			DependencyOfPURL: ipkg.DependencyOfPURL,
