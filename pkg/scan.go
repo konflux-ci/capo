@@ -355,7 +355,7 @@ func getPackageMetadata(
 	builderPkgs []sbom.SyftPackage,
 	intermediatePkgs []sbom.SyftPackage,
 ) []PackageMetadataItem {
-	res := make([]PackageMetadataItem, 0)
+	res := make([]PackageMetadataItem, 0, len(builderPkgs) + len(intermediatePkgs))
 
 	for _, bpkg := range builderPkgs {
 		res = append(res, PackageMetadataItem{
