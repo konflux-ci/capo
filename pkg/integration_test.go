@@ -288,7 +288,7 @@ func TestIntegration(t *testing.T) {
 					{
 						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
 						OriginType: "builder",
-						Pullspec:   "localhost/capo-builder/go_builder:latest",
+						Pullspec:   "localhost/capo-builder/go_builder@sha256:35623538333b2cf7e59ba286cb60bfdda7bc20cc69abdfe9484f8238f363de57",
 						StageAlias: "builder",
 					},
 				},
