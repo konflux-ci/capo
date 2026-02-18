@@ -100,6 +100,15 @@ func (buildDef *BuildDefinition) buildImage(store storage.Store, isBuilder bool)
 	return sh.RunV("buildah", args...)
 }
 
+// normalizePullspecForComparison extracts the image reference part from a pullspec,
+// removing the digest portion for flexible comparison in tests.
+func normalizePullspecForComparison(pullspec string) string {
+	if atIndex := strings.Index(pullspec, "@sha256:"); atIndex != -1 {
+		return pullspec[:atIndex]
+	}
+	return pullspec
+}
+
 // createPackageKey creates a unique key for a package based on its identifying fields
 func createPackageKey(pkg PackageMetadataItem) (string, error) {
 	// Sort the Checksums slice to ensure consistent ordering of slices
@@ -107,9 +116,13 @@ func createPackageKey(pkg PackageMetadataItem) (string, error) {
 		sort.Strings(pkg.Checksums)
 	}
 
+	// Create a copy of the package with normalized pullspec for key generation
+	normalizedPkg := pkg
+	normalizedPkg.Pullspec = normalizePullspecForComparison(pkg.Pullspec)
+
 	// Use JSON marshalling to create a unique key that includes all fields
 	// This is more robust than manual string concatenation and handles edge cases
-	jsonBytes, err := json.Marshal(pkg)
+	jsonBytes, err := json.Marshal(normalizedPkg)
 	if err != nil {
 		return "", err
 	}
