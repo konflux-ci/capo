@@ -42,6 +42,7 @@ type Stage struct {
 	// Alias of the builder stage or equal to FinalStage if final
 	Alias string
 	// Base image for the stage
+	// FIXME: maybe call this "base" or something, since it can also be Scratch or oci:archive
 	Pullspec string
 	// Builder copies in this stage
 	Copies []Copy
@@ -128,14 +129,18 @@ func argsMapToSlice(m map[string]string) []string {
 func mapAliasesToPullspecs(stages []imagebuilder.Stage) map[string]string {
 	res := make(map[string]string)
 
-	// skip final stage, copies from that stage are not allowed
-	for _, s := range stages[:len(stages)-1] {
+	for i, s := range stages {
+		alias := s.Name
+		if i == len(stages)-1 {
+			alias = FinalStage
+		}
+
 		headingEnv := argsMapToSlice(s.Builder.HeadingArgs)
 		userEnv := argsMapToSlice(s.Builder.Args)
 		env := append(headingEnv, userEnv...)
 
 		fromNode := s.Node.Children[0]
-		res[s.Name], _ = imagebuilder.ProcessWord(fromNode.Next.Value, env)
+		res[alias], _ = imagebuilder.ProcessWord(fromNode.Next.Value, env)
 	}
 
 	return res
