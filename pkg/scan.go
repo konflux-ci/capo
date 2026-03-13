@@ -25,8 +25,8 @@ type packageSource struct {
 	// Pullspec of this stage as it appeared in the containerfile.
 	pullspec string
 
-	// Pullspec of this stage with digest instead of tag.
-	digestPullspec string
+	// Pullspec of the base of this stage with digest instead of tag.
+	digestBase string
 
 	// Slice of paths to content in the layer/image which should be syft-scanned
 	sources []string
@@ -231,7 +231,7 @@ func getPackageSources(
 		res = append(res, packageSource{
 			alias:          stage.Alias,
 			pullspec:       stage.Base,
-			digestPullspec: digestPullspec,
+			digestBase: digestPullspec,
 			sources:        stageToSources[stage],
 		})
 
@@ -252,7 +252,7 @@ func getPackageSources(
 		res = append(res, packageSource{
 			alias:          stage.Alias,
 			pullspec:       stage.Base,
-			digestPullspec: digestPullspec,
+			digestBase: digestPullspec,
 			sources:        sources,
 		})
 	}
@@ -359,7 +359,7 @@ func getPackageMetadata(
 
 	for _, bpkg := range builderPkgs {
 		res = append(res, PackageMetadataItem{
-			Pullspec:         pkgSource.digestPullspec,
+			Pullspec:         pkgSource.digestBase,
 			StageAlias:       pkgSource.alias,
 			PackageURL:       bpkg.PURL,
 			DependencyOfPURL: bpkg.DependencyOfPURL,
@@ -370,7 +370,7 @@ func getPackageMetadata(
 
 	for _, ipkg := range intermediatePkgs {
 		res = append(res, PackageMetadataItem{
-			Pullspec:         pkgSource.digestPullspec,
+			Pullspec:         pkgSource.digestBase,
 			StageAlias:       pkgSource.alias,
 			PackageURL:       ipkg.PURL,
 			DependencyOfPURL: ipkg.DependencyOfPURL,

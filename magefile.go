@@ -10,6 +10,7 @@ import (
 
 var Default = Build
 var CapoPackage = "./cmd/capo"
+var BuildprobePackage = "./cmd/buildprobe"
 
 // Runs the capo module in a buildah namespace using 'buildah unshare'.
 // Passes args to capo. Capo arguments must be passed as a single string:
@@ -23,6 +24,18 @@ func Run(capoArgsStr string) error {
 		CapoPackage,
 	}
 	bArgs = append(bArgs, capoArgs...)
+	return sh.RunV("buildah", bArgs...)
+}
+
+func RunProbe(probeArgsStr string) error {
+	probeArgs := strings.Split(probeArgsStr, " ")
+	bArgs := []string{
+		"unshare",
+		"go",
+		"run",
+		BuildprobePackage,
+	}
+	bArgs = append(bArgs, probeArgs...)
 	return sh.RunV("buildah", bArgs...)
 }
 
