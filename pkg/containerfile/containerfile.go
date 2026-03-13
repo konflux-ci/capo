@@ -41,9 +41,8 @@ type Copy struct {
 type Stage struct {
 	// Alias of the builder stage or equal to FinalStage if final
 	Alias string
-	// Base image for the stage
-	// FIXME: maybe call this "base" or something, since it can also be Scratch or oci:archive
-	Pullspec string
+	// Base image for the stage. Can be a pullspec, "scratch", or "oci:archive".
+	Base string
 	// Builder copies in this stage
 	Copies []Copy
 }
@@ -105,9 +104,9 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 		}
 
 		res = append(res, Stage{
-			Alias:    s.Name,
-			Pullspec: aliasToPullspec[s.Name],
-			Copies:   copies,
+			Alias:  s.Name,
+			Base:   aliasToPullspec[s.Name],
+			Copies: copies,
 		})
 	}
 
