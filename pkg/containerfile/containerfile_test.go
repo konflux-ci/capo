@@ -5,10 +5,11 @@ package containerfile
 import (
 	"errors"
 	"fmt"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestParseBuiltinArgs(t *testing.T) {
@@ -27,7 +28,7 @@ func TestParseBuiltinArgs(t *testing.T) {
 		},
 		{
 			Alias:    FinalStage,
-			Pullspec: "",
+			Pullspec: "scratch",
 			Copies: []Copy{
 				{
 					From:        "builder",
@@ -45,8 +46,8 @@ func TestParseBuiltinArgs(t *testing.T) {
 		t.Fatalf("Parsing failed: %v", err)
 	}
 
-	if !reflect.DeepEqual(actual, expected) {
-		t.Fatalf("Actual parsed stages %+v don't match expected %+v", actual, expected)
+	if diff := cmp.Diff(actual, expected); diff != "" {
+		t.Errorf("Parse() result mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -107,7 +108,7 @@ func TestParse(t *testing.T) {
 				},
 				{
 					Alias:    FinalStage,
-					Pullspec: "",
+					Pullspec: "scratch",
 					Copies: []Copy{
 						{
 							From:        "docker.io/library/fedora:latest",
@@ -136,7 +137,7 @@ func TestParse(t *testing.T) {
 			expected: []Stage{
 				{
 					Alias:    FinalStage,
-					Pullspec: "",
+					Pullspec: "docker.io/library/fedora:latest",
 					Copies: []Copy{
 						{
 							From:        "docker.io/library/alpine:latest",
@@ -167,7 +168,7 @@ func TestParse(t *testing.T) {
 				},
 				{
 					Alias:    FinalStage,
-					Pullspec: "",
+					Pullspec: "scratch",
 					Copies: []Copy{
 						{
 							From:        "builder1",
@@ -211,7 +212,7 @@ func TestParse(t *testing.T) {
 				},
 				{
 					Alias:    FinalStage,
-					Pullspec: "",
+					Pullspec: "scratch",
 					Copies: []Copy{
 						{
 							From:        "builder2",
@@ -242,7 +243,7 @@ func TestParse(t *testing.T) {
 				},
 				{
 					Alias:    FinalStage,
-					Pullspec: "",
+					Pullspec: "scratch",
 					Copies: []Copy{
 						{
 							From:        "builder",
@@ -316,7 +317,7 @@ func TestParse(t *testing.T) {
 				},
 				{
 					Alias:    FinalStage,
-					Pullspec: "",
+					Pullspec: "scratch",
 					Copies: []Copy{
 						{
 							From:        "builder2",
@@ -361,7 +362,7 @@ func TestParse(t *testing.T) {
 				},
 				{
 					Alias:    FinalStage,
-					Pullspec: "",
+					Pullspec: "scratch",
 					Copies: []Copy{
 						{
 							From:        "builder2",
@@ -401,7 +402,7 @@ func TestParse(t *testing.T) {
 				},
 				{
 					Alias:    FinalStage,
-					Pullspec: "",
+					Pullspec: "scratch",
 					Copies: []Copy{
 						{
 							From:        "builder1",
@@ -436,8 +437,8 @@ func TestParse(t *testing.T) {
 				t.Fatalf("Parsing failed: %v", err)
 			}
 
-			if !reflect.DeepEqual(actual, test.expected) {
-				t.Fatalf("Actual parsed stages %+v don't match expected %+v", actual, test.expected)
+			if diff := cmp.Diff(actual, test.expected); diff != "" {
+				t.Errorf("Parse() result mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
