@@ -62,8 +62,8 @@ func TestGetPackageSources(t *testing.T) {
 		"only external copy in final": {
 			stages: []containerfile.Stage{
 				{
-					Alias:    containerfile.FinalStage,
-					Pullspec: "",
+					Alias: containerfile.FinalStage,
+					Base:  "",
 					Copies: []containerfile.Copy{
 						{
 							From:        "docker.io/library/fedora:latest",
@@ -79,28 +79,28 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expected: []packageSource{
 				{
-					alias:          "",
-					pullspec:       "docker.io/library/fedora:latest",
-					digestPullspec: "docker.io/library/fedora@sha256:abc123",
-					sources:        []string{"/usr/bin/oras"},
+					alias:      "",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:abc123",
+					sources:    []string{"/usr/bin/oras"},
 				},
 			},
 		},
 		"copies in final stage only": {
 			stages: []containerfile.Stage{
 				{
-					Alias:    "builder1",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []containerfile.Copy{},
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
 				},
 				{
-					Alias:    "builder2",
-					Pullspec: "docker.io/alpine/helm:latest",
-					Copies:   []containerfile.Copy{},
+					Alias:  "builder2",
+					Base:   "docker.io/alpine/helm:latest",
+					Copies: []containerfile.Copy{},
 				},
 				{
-					Alias:    containerfile.FinalStage,
-					Pullspec: "",
+					Alias: containerfile.FinalStage,
+					Base:  "",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder1",
@@ -123,29 +123,29 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expected: []packageSource{
 				{
-					alias:          "builder1",
-					pullspec:       "docker.io/library/fedora:latest",
-					digestPullspec: "docker.io/library/fedora@sha256:def456",
-					sources:        []string{"/usr/bin/oras"},
+					alias:      "builder1",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:def456",
+					sources:    []string{"/usr/bin/oras"},
 				},
 				{
-					alias:          "builder2",
-					pullspec:       "docker.io/alpine/helm:latest",
-					digestPullspec: "docker.io/alpine/helm@sha256:ghi789",
-					sources:        []string{"/usr/bin/helm"},
+					alias:      "builder2",
+					pullspec:   "docker.io/alpine/helm:latest",
+					digestBase: "docker.io/alpine/helm@sha256:ghi789",
+					sources:    []string{"/usr/bin/helm"},
 				},
 			},
 		},
 		"recursive multi-stage file copy": {
 			stages: []containerfile.Stage{
 				{
-					Alias:    "builder1",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []containerfile.Copy{},
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
 				},
 				{
-					Alias:    "builder2",
-					Pullspec: "docker.io/alpine/helm:latest",
+					Alias: "builder2",
+					Base:  "docker.io/alpine/helm:latest",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder1",
@@ -156,8 +156,8 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 				{
-					Alias:    containerfile.FinalStage,
-					Pullspec: "",
+					Alias: containerfile.FinalStage,
+					Base:  "",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder2",
@@ -174,29 +174,29 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expected: []packageSource{
 				{
-					alias:          "builder1",
-					pullspec:       "docker.io/library/fedora:latest",
-					digestPullspec: "docker.io/library/fedora@sha256:jkl012",
-					sources:        []string{"/usr/bin/oras"},
+					alias:      "builder1",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:jkl012",
+					sources:    []string{"/usr/bin/oras"},
 				},
 				{
-					alias:          "builder2",
-					pullspec:       "docker.io/alpine/helm:latest",
-					digestPullspec: "docker.io/alpine/helm@sha256:mno345",
-					sources:        []string{},
+					alias:      "builder2",
+					pullspec:   "docker.io/alpine/helm:latest",
+					digestBase: "docker.io/alpine/helm@sha256:mno345",
+					sources:    []string{},
 				},
 			},
 		},
 		"recursive multi-stage file copy - mixed sources": {
 			stages: []containerfile.Stage{
 				{
-					Alias:    "builder1",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []containerfile.Copy{},
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
 				},
 				{
-					Alias:    "builder2",
-					Pullspec: "docker.io/alpine/helm:latest",
+					Alias: "builder2",
+					Base:  "docker.io/alpine/helm:latest",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder1",
@@ -207,8 +207,8 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 				{
-					Alias:    containerfile.FinalStage,
-					Pullspec: "",
+					Alias: containerfile.FinalStage,
+					Base:  "",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder2",
@@ -225,29 +225,29 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expected: []packageSource{
 				{
-					alias:          "builder1",
-					pullspec:       "docker.io/library/fedora:latest",
-					digestPullspec: "docker.io/library/fedora@sha256:pqr678",
-					sources:        []string{"/usr/bin/oras"},
+					alias:      "builder1",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:pqr678",
+					sources:    []string{"/usr/bin/oras"},
 				},
 				{
-					alias:          "builder2",
-					pullspec:       "docker.io/alpine/helm:latest",
-					digestPullspec: "docker.io/alpine/helm@sha256:stu901",
-					sources:        []string{"/usr/bin/helm"},
+					alias:      "builder2",
+					pullspec:   "docker.io/alpine/helm:latest",
+					digestBase: "docker.io/alpine/helm@sha256:stu901",
+					sources:    []string{"/usr/bin/helm"},
 				},
 			},
 		},
 		"multi-stage directory copy": {
 			stages: []containerfile.Stage{
 				{
-					Alias:    "builder1",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []containerfile.Copy{},
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
 				},
 				{
-					Alias:    "builder2",
-					Pullspec: "docker.io/alpine/helm:latest",
+					Alias: "builder2",
+					Base:  "docker.io/alpine/helm:latest",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder1",
@@ -264,8 +264,8 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 				{
-					Alias:    containerfile.FinalStage,
-					Pullspec: "",
+					Alias: containerfile.FinalStage,
+					Base:  "",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder2",
@@ -282,29 +282,29 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expected: []packageSource{
 				{
-					alias:          "builder1",
-					pullspec:       "docker.io/library/fedora:latest",
-					digestPullspec: "docker.io/library/fedora@sha256:vwx234",
-					sources:        []string{"/usr/bin/oras", "/bin/*"},
+					alias:      "builder1",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:vwx234",
+					sources:    []string{"/usr/bin/oras", "/bin/*"},
 				},
 				{
-					alias:          "builder2",
-					pullspec:       "docker.io/alpine/helm:latest",
-					digestPullspec: "docker.io/alpine/helm@sha256:yza567",
-					sources:        []string{"/app/"},
+					alias:      "builder2",
+					pullspec:   "docker.io/alpine/helm:latest",
+					digestBase: "docker.io/alpine/helm@sha256:yza567",
+					sources:    []string{"/app/"},
 				},
 			},
 		},
 		"ignore non-copied content": {
 			stages: []containerfile.Stage{
 				{
-					Alias:    "builder1",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []containerfile.Copy{},
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
 				},
 				{
-					Alias:    "builder2",
-					Pullspec: "docker.io/alpine/helm:latest",
+					Alias: "builder2",
+					Base:  "docker.io/alpine/helm:latest",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder1",
@@ -315,8 +315,8 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 				{
-					Alias:    containerfile.FinalStage,
-					Pullspec: "",
+					Alias: containerfile.FinalStage,
+					Base:  "",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder2",
@@ -333,29 +333,29 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expected: []packageSource{
 				{
-					alias:          "builder1",
-					pullspec:       "docker.io/library/fedora:latest",
-					digestPullspec: "docker.io/library/fedora@sha256:bcd890",
-					sources:        []string{},
+					alias:      "builder1",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:bcd890",
+					sources:    []string{},
 				},
 				{
-					alias:          "builder2",
-					pullspec:       "docker.io/alpine/helm:latest",
-					digestPullspec: "docker.io/alpine/helm@sha256:efg123",
-					sources:        []string{"/app/"},
+					alias:      "builder2",
+					pullspec:   "docker.io/alpine/helm:latest",
+					digestBase: "docker.io/alpine/helm@sha256:efg123",
+					sources:    []string{"/app/"},
 				},
 			},
 		},
 		"complex multi-stage with multiple final copies": {
 			stages: []containerfile.Stage{
 				{
-					Alias:    "builder1",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []containerfile.Copy{},
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
 				},
 				{
-					Alias:    "builder2",
-					Pullspec: "docker.io/alpine/helm:latest",
+					Alias: "builder2",
+					Base:  "docker.io/alpine/helm:latest",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder1",
@@ -366,8 +366,8 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 				{
-					Alias:    containerfile.FinalStage,
-					Pullspec: "",
+					Alias: containerfile.FinalStage,
+					Base:  "",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder1",
@@ -396,29 +396,29 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expected: []packageSource{
 				{
-					alias:          "builder1",
-					pullspec:       "docker.io/library/fedora:latest",
-					digestPullspec: "docker.io/library/fedora@sha256:hij456",
-					sources:        []string{"/lib/libc.so", "/usr/bin/kubectl"},
+					alias:      "builder1",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:hij456",
+					sources:    []string{"/lib/libc.so", "/usr/bin/kubectl"},
 				},
 				{
-					alias:          "builder2",
-					pullspec:       "docker.io/alpine/helm:latest",
-					digestPullspec: "docker.io/alpine/helm@sha256:klm789",
-					sources:        []string{"/tools/", "/usr/bin/helm"},
+					alias:      "builder2",
+					pullspec:   "docker.io/alpine/helm:latest",
+					digestBase: "docker.io/alpine/helm@sha256:klm789",
+					sources:    []string{"/tools/", "/usr/bin/helm"},
 				},
 			},
 		},
 		"wildcard copy in final stage": {
 			stages: []containerfile.Stage{
 				{
-					Alias:    "builder",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []containerfile.Copy{},
+					Alias:  "builder",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
 				},
 				{
-					Alias:    containerfile.FinalStage,
-					Pullspec: "",
+					Alias: containerfile.FinalStage,
+					Base:  "",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder",
@@ -433,23 +433,23 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expected: []packageSource{
 				{
-					alias:          "builder",
-					pullspec:       "docker.io/library/fedora:latest",
-					digestPullspec: "docker.io/library/fedora@sha256:hij456",
-					sources:        []string{"/lib/*.so"},
+					alias:      "builder",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:hij456",
+					sources:    []string{"/lib/*.so"},
 				},
 			},
 		},
 		"wildcard traced through multiple stages": {
 			stages: []containerfile.Stage{
 				{
-					Alias:    "builder1",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []containerfile.Copy{},
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
 				},
 				{
-					Alias:    "builder2",
-					Pullspec: "docker.io/alpine/helm:latest",
+					Alias: "builder2",
+					Base:  "docker.io/alpine/helm:latest",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder1",
@@ -459,8 +459,8 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 				{
-					Alias:    containerfile.FinalStage,
-					Pullspec: "",
+					Alias: containerfile.FinalStage,
+					Base:  "",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder2",
@@ -476,29 +476,29 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expected: []packageSource{
 				{
-					alias:          "builder1",
-					pullspec:       "docker.io/library/fedora:latest",
-					digestPullspec: "docker.io/library/fedora@sha256:hij456",
-					sources:        []string{"/usr/lib/*.so"},
+					alias:      "builder1",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:hij456",
+					sources:    []string{"/usr/lib/*.so"},
 				},
 				{
-					alias:          "builder2",
-					pullspec:       "docker.io/alpine/helm:latest",
-					digestPullspec: "docker.io/library/alpine/helm@sha256:abcdef",
-					sources:        []string{"/libs/*.so"},
+					alias:      "builder2",
+					pullspec:   "docker.io/alpine/helm:latest",
+					digestBase: "docker.io/library/alpine/helm@sha256:abcdef",
+					sources:    []string{"/libs/*.so"},
 				},
 			},
 		},
 		"mixed wildcards and regular files": {
 			stages: []containerfile.Stage{
 				{
-					Alias:    "builder",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []containerfile.Copy{},
+					Alias:  "builder",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
 				},
 				{
-					Alias:    containerfile.FinalStage,
-					Pullspec: "",
+					Alias: containerfile.FinalStage,
+					Base:  "",
 					Copies: []containerfile.Copy{
 						{
 							From:        "builder",
@@ -513,10 +513,10 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expected: []packageSource{
 				{
-					alias:          "builder",
-					pullspec:       "docker.io/library/fedora:latest",
-					digestPullspec: "docker.io/library/fedora@sha256:hij456",
-					sources:        []string{"/usr/bin/helm", "/lib/*.so", "/etc/config.txt"},
+					alias:      "builder",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:hij456",
+					sources:    []string{"/usr/bin/helm", "/lib/*.so", "/etc/config.txt"},
 				},
 			},
 		},

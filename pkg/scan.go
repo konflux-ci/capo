@@ -125,13 +125,13 @@ func resolvePullspecs(store storage.Store, stages []containerfile.Stage) (map[st
 	res := make(map[string]string)
 
 	for _, stage := range stages[:len(stages)-1] {
-		if _, ok := res[stage.Pullspec]; !ok {
-			resolved, err := resolvePullspec(store, stage.Pullspec)
+		if _, ok := res[stage.Base]; !ok {
+			resolved, err := resolvePullspec(store, stage.Base)
 			if err != nil {
 				return nil, err
 			}
 
-			res[stage.Pullspec] = resolved
+			res[stage.Base] = resolved
 		}
 	}
 
@@ -209,9 +209,9 @@ func getPackageSources(
 				traceSource(source, aliasToStage[cp.From], stageToSources, aliasToStage)
 			} else {
 				external := containerfile.Stage{
-					Alias:    "",
-					Pullspec: cp.From,
-					Copies:   []containerfile.Copy{},
+					Alias:  "",
+					Base:   cp.From,
+					Copies: []containerfile.Copy{},
 				}
 				stageToSources[&external] = append(stageToSources[&external], source)
 			}
@@ -222,15 +222,15 @@ func getPackageSources(
 	for i := range stages[:len(stages)-1] {
 		stage := &stages[i]
 
-		digestPullspec, ok := resolvedPullspecs[stage.Pullspec]
+		digestPullspec, ok := resolvedPullspecs[stage.Base]
 		if !ok {
 			return []packageSource{},
-				fmt.Errorf("%w %q: could not find resolved pullspec", ErrPullspecResolve, stage.Pullspec)
+				fmt.Errorf("%w %q: could not find resolved pullspec", ErrPullspecResolve, stage.Base)
 		}
 
 		res = append(res, packageSource{
 			alias:          stage.Alias,
-			pullspec:       stage.Pullspec,
+			pullspec:       stage.Base,
 			digestPullspec: digestPullspec,
 			sources:        stageToSources[stage],
 		})
@@ -243,15 +243,15 @@ func getPackageSources(
 
 	// construct external package sources
 	for stage, sources := range stageToSources {
-		digestPullspec, ok := resolvedPullspecs[stage.Pullspec]
+		digestPullspec, ok := resolvedPullspecs[stage.Base]
 		if !ok {
 			return []packageSource{},
-				fmt.Errorf("%w %q: could not find resolved pullspec", ErrPullspecResolve, stage.Pullspec)
+				fmt.Errorf("%w %q: could not find resolved pullspec", ErrPullspecResolve, stage.Base)
 		}
 
 		res = append(res, packageSource{
 			alias:          stage.Alias,
-			pullspec:       stage.Pullspec,
+			pullspec:       stage.Base,
 			digestPullspec: digestPullspec,
 			sources:        sources,
 		})

@@ -22,13 +22,13 @@ func TestParseBuiltinArgs(t *testing.T) {
 
 	expected := []Stage{
 		{
-			Alias:    "builder",
-			Pullspec: expectedPullspec,
-			Copies:   []Copy{},
+			Alias:  "builder",
+			Base:   expectedPullspec,
+			Copies: []Copy{},
 		},
 		{
-			Alias:    FinalStage,
-			Pullspec: "scratch",
+			Alias: FinalStage,
+			Base:  "scratch",
 			Copies: []Copy{
 				{
 					From:        "builder",
@@ -102,13 +102,13 @@ func TestParse(t *testing.T) {
 			},
 			expected: []Stage{
 				{
-					Alias:    "builder",
-					Pullspec: "docker.io/library/alpine:latest",
-					Copies:   []Copy{},
+					Alias:  "builder",
+					Base:   "docker.io/library/alpine:latest",
+					Copies: []Copy{},
 				},
 				{
-					Alias:    FinalStage,
-					Pullspec: "scratch",
+					Alias: FinalStage,
+					Base:  "scratch",
 					Copies: []Copy{
 						{
 							From:        "docker.io/library/fedora:latest",
@@ -136,8 +136,8 @@ func TestParse(t *testing.T) {
 			},
 			expected: []Stage{
 				{
-					Alias:    FinalStage,
-					Pullspec: "docker.io/library/fedora:latest",
+					Alias: FinalStage,
+					Base:  "docker.io/library/fedora:latest",
 					Copies: []Copy{
 						{
 							From:        "docker.io/library/alpine:latest",
@@ -157,18 +157,18 @@ func TestParse(t *testing.T) {
 							COPY --from=builder2 /usr/bin/helm /usr/bin/helm`,
 			expected: []Stage{
 				{
-					Alias:    "builder1",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []Copy{},
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []Copy{},
 				},
 				{
-					Alias:    "builder2",
-					Pullspec: "docker.io/alpine/helm:latest",
-					Copies:   []Copy{},
+					Alias:  "builder2",
+					Base:   "docker.io/alpine/helm:latest",
+					Copies: []Copy{},
 				},
 				{
-					Alias:    FinalStage,
-					Pullspec: "scratch",
+					Alias: FinalStage,
+					Base:  "scratch",
 					Copies: []Copy{
 						{
 							From:        "builder1",
@@ -194,13 +194,13 @@ func TestParse(t *testing.T) {
 							COPY --from=builder2 /usr/bin/oras /usr/bin/oras`,
 			expected: []Stage{
 				{
-					Alias:    "builder1",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []Copy{},
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []Copy{},
 				},
 				{
-					Alias:    "builder2",
-					Pullspec: "docker.io/alpine/helm:latest",
+					Alias: "builder2",
+					Base:  "docker.io/alpine/helm:latest",
 					Copies: []Copy{
 						{
 							From:        "builder1",
@@ -211,8 +211,8 @@ func TestParse(t *testing.T) {
 					},
 				},
 				{
-					Alias:    FinalStage,
-					Pullspec: "scratch",
+					Alias: FinalStage,
+					Base:  "scratch",
 					Copies: []Copy{
 						{
 							From:        "builder2",
@@ -237,13 +237,13 @@ func TestParse(t *testing.T) {
 							COPY --from=builder /usr/bin/oras .`,
 			expected: []Stage{
 				{
-					Alias:    "builder",
-					Pullspec: "docker.io/alpine/helm:latest",
-					Copies:   []Copy{},
+					Alias:  "builder",
+					Base:   "docker.io/alpine/helm:latest",
+					Copies: []Copy{},
 				},
 				{
-					Alias:    FinalStage,
-					Pullspec: "scratch",
+					Alias: FinalStage,
+					Base:  "scratch",
 					Copies: []Copy{
 						{
 							From:        "builder",
@@ -299,13 +299,13 @@ func TestParse(t *testing.T) {
 							COPY --from=builder2 /usr/bin/oras /usr/bin/helm /app/`,
 			expected: []Stage{
 				{
-					Alias:    "builder1",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []Copy{},
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []Copy{},
 				},
 				{
-					Alias:    "builder2",
-					Pullspec: "docker.io/alpine/helm:latest",
+					Alias: "builder2",
+					Base:  "docker.io/alpine/helm:latest",
 					Copies: []Copy{
 						{
 							From:        "builder1",
@@ -316,8 +316,8 @@ func TestParse(t *testing.T) {
 					},
 				},
 				{
-					Alias:    FinalStage,
-					Pullspec: "scratch",
+					Alias: FinalStage,
+					Base:  "scratch",
 					Copies: []Copy{
 						{
 							From:        "builder2",
@@ -338,13 +338,13 @@ func TestParse(t *testing.T) {
 							COPY --from=builder2 /app/ /app/`,
 			expected: []Stage{
 				{
-					Alias:    "builder1",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []Copy{},
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []Copy{},
 				},
 				{
-					Alias:    "builder2",
-					Pullspec: "docker.io/alpine/helm:latest",
+					Alias: "builder2",
+					Base:  "docker.io/alpine/helm:latest",
 					Copies: []Copy{
 						{
 							From:        "builder1",
@@ -361,8 +361,8 @@ func TestParse(t *testing.T) {
 					},
 				},
 				{
-					Alias:    FinalStage,
-					Pullspec: "scratch",
+					Alias: FinalStage,
+					Base:  "scratch",
 					Copies: []Copy{
 						{
 							From:        "builder2",
@@ -384,13 +384,13 @@ func TestParse(t *testing.T) {
 							COPY --from=builder2 /usr/bin/helm /usr/bin/helm`,
 			expected: []Stage{
 				{
-					Alias:    "builder1",
-					Pullspec: "docker.io/library/fedora:latest",
-					Copies:   []Copy{},
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []Copy{},
 				},
 				{
-					Alias:    "builder2",
-					Pullspec: "docker.io/alpine/helm:latest",
+					Alias: "builder2",
+					Base:  "docker.io/alpine/helm:latest",
 					Copies: []Copy{
 						{
 							From:        "builder1",
@@ -401,8 +401,8 @@ func TestParse(t *testing.T) {
 					},
 				},
 				{
-					Alias:    FinalStage,
-					Pullspec: "scratch",
+					Alias: FinalStage,
+					Base:  "scratch",
 					Copies: []Copy{
 						{
 							From:        "builder1",
