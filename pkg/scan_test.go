@@ -433,10 +433,10 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expected: []packageSource{
 				{
-					alias:    "builder",
-					pullspec: "docker.io/library/fedora:latest",
+					alias:          "builder",
+					pullspec:       "docker.io/library/fedora:latest",
 					digestPullspec: "docker.io/library/fedora@sha256:hij456",
-					sources:  []string{"/lib/*.so"},
+					sources:        []string{"/lib/*.so"},
 				},
 			},
 		},
@@ -472,20 +472,20 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			resolvedPullspecs: map[string]string{
 				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:hij456",
-				"docker.io/alpine/helm:latest": "docker.io/library/alpine/helm@sha256:abcdef",
+				"docker.io/alpine/helm:latest":    "docker.io/library/alpine/helm@sha256:abcdef",
 			},
 			expected: []packageSource{
 				{
-					alias:    "builder1",
-					pullspec: "docker.io/library/fedora:latest",
+					alias:          "builder1",
+					pullspec:       "docker.io/library/fedora:latest",
 					digestPullspec: "docker.io/library/fedora@sha256:hij456",
-					sources:  []string{"/usr/lib/*.so"},
+					sources:        []string{"/usr/lib/*.so"},
 				},
 				{
-					alias:    "builder2",
-					pullspec: "docker.io/alpine/helm:latest",
+					alias:          "builder2",
+					pullspec:       "docker.io/alpine/helm:latest",
 					digestPullspec: "docker.io/library/alpine/helm@sha256:abcdef",
-					sources:  []string{"/libs/*.so"},
+					sources:        []string{"/libs/*.so"},
 				},
 			},
 		},
@@ -513,10 +513,10 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expected: []packageSource{
 				{
-					alias:    "builder",
-					pullspec: "docker.io/library/fedora:latest",
+					alias:          "builder",
+					pullspec:       "docker.io/library/fedora:latest",
 					digestPullspec: "docker.io/library/fedora@sha256:hij456",
-					sources:  []string{"/usr/bin/helm", "/lib/*.so", "/etc/config.txt"},
+					sources:        []string{"/usr/bin/helm", "/lib/*.so", "/etc/config.txt"},
 				},
 			},
 		},
