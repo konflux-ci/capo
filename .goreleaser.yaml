@@ -24,6 +24,25 @@ builds:
       post:
         - upx -9 "{{ .Path }}"
 
+  - id: sbomprobe
+    binary: sbomprobe
+    dir: ./cmd/sbomprobe
+    ldflags:
+      - -s -w -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser -X main.Version={{.Version}} -X main.Revision={{.ShortCommit}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+      - ppc64le
+    tags:
+      - exclude_graphdriver_btrfs
+    hooks:
+      post:
+        - upx -9 "{{ .Path }}"
+
 archives:
   - name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     wrap_in_directory: true

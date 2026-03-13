@@ -35,7 +35,7 @@ func comparePackageSources(a, b []packageSource) bool {
 
 // packageSourceEqual compares two packageSource structs
 func packageSourceEqual(a, b packageSource) bool {
-	if a.alias != b.alias || a.pullspec != b.pullspec || a.digestPullspec != b.digestPullspec {
+	if a.alias != b.alias || a.pullspec != b.pullspec || a.digestBase != b.digestBase {
 		return false
 	}
 
