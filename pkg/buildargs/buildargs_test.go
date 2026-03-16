@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestParseBuildArgLine(t *testing.T) {
@@ -71,13 +73,8 @@ EQUALS=a=b=c
 		"EQUALS": "a=b=c",
 	}
 
-	if len(args) != len(expected) {
-		t.Fatalf("got %d args, want %d", len(args), len(expected))
-	}
-	for k, want := range expected {
-		if got := args[k]; got != want {
-			t.Errorf("args[%q] = %q, want %q", k, got, want)
-		}
+	if diff := cmp.Diff(expected, args); diff != "" {
+		t.Errorf("ParseBuildArgFile() mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -122,12 +119,7 @@ func TestMergeBuildArgs(t *testing.T) {
 		"C": "from-cli",
 	}
 
-	if len(merged) != len(expected) {
-		t.Fatalf("got %d args, want %d", len(merged), len(expected))
-	}
-	for k, want := range expected {
-		if got := merged[k]; got != want {
-			t.Errorf("merged[%q] = %q, want %q", k, got, want)
-		}
+	if diff := cmp.Diff(expected, merged); diff != "" {
+		t.Errorf("MergeBuildArgs() mismatch (-want +got):\n%s", diff)
 	}
 }
