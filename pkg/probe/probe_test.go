@@ -192,6 +192,64 @@ func TestProbe(t *testing.T) {
 				ExtraImages: []Image{},
 			},
 		},
+		// The following test exists to match inconsistent behaviour in buildah:
+		// https://github.com/containers/buildah/issues/6731
+		"duplicate stage names reports both base images": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							COPY . .
+							FROM quay.io/fedora:42 AS builder
+							COPY . .
+							FROM scratch
+							COPY --from=builder /app /app`,
+			opts: ProbeOpts{
+				Tag:    "quay.io/image:latest",
+				Target: "",
+				Args:   make(map[string]string),
+			},
+			digests: map[string]string{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/fedora:42":    "fedoradigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImages: []Image{
+					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+					{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
+				},
+				ExtraImages: []Image{},
+			},
+		},
+		"duplicate stage names with target matches first stage": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							COPY . .
+							FROM quay.io/fedora:42 AS builder
+							COPY . .
+							FROM scratch
+							COPY --from=builder /app /app`,
+			opts: ProbeOpts{
+				Tag:    "quay.io/image:latest",
+				Target: "builder",
+				Args:   make(map[string]string),
+			},
+			digests: map[string]string{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImages: []Image{
+					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				},
+				ExtraImages: []Image{},
+			},
+		},
 	}
 
 	for name, test := range tests {
@@ -209,7 +267,7 @@ func TestProbe(t *testing.T) {
 				t.Fatalf("Probe returned unexpected error: %v", err)
 			}
 
-			if diff := cmp.Diff(actual, test.expected); diff != "" {
+			if diff := cmp.Diff(test.expected, actual); diff != "" {
 				t.Errorf("Probe() result mismatch (-want +got):\n%s", diff)
 			}
 		})
