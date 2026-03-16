@@ -7,8 +7,8 @@ import (
 	"log"
 	"os"
 	"runtime/debug"
-	"strings"
 
+	"github.com/konflux-ci/capo/pkg/buildargs"
 	"github.com/konflux-ci/capo/pkg/probe"
 	"github.com/konflux-ci/capo/pkg/repository"
 	"go.yaml.in/yaml/v3"
@@ -60,16 +60,16 @@ func parseArgs() (args, error) {
 		"Path to the Containerfile used in the build. Required.",
 	)
 
-	buildArgs := make(map[string]string)
+	cliArgs := make(map[string]string)
 	flag.Func(
 		"build-arg",
 		"Build argument passed to buildah in the form KEY=VALUE. Can be used multiple times.",
 		func(s string) error {
-			parts := strings.Split(s, "=")
-			if len(parts) != 2 || parts[0] == "" {
+			key, value, err := buildargs.ParseBuildArgLine(s)
+			if err != nil {
 				return ErrBuildArg
 			}
-			buildArgs[parts[0]] = parts[1]
+			cliArgs[key] = value
 			return nil
 		},
 	)
@@ -80,9 +80,24 @@ func parseArgs() (args, error) {
 		"Build target passed to buildah, if any.",
 	)
 
-	// FIXME: build arg file argument support
+	buildArgFile := flag.String(
+		"build-arg-file",
+		"",
+		"Path to a file of build arguments (one KEY=VALUE per line). Read before --build-arg values.",
+	)
 
 	flag.Parse()
+
+	var buildArgs map[string]string
+	if *buildArgFile != "" {
+		fileArgs, err := buildargs.ParseBuildArgFile(*buildArgFile)
+		if err != nil {
+			return args{}, fmt.Errorf("parsing build-arg-file: %w", err)
+		}
+		buildArgs = buildargs.MergeBuildArgs(fileArgs, cliArgs)
+	} else {
+		buildArgs = cliArgs
+	}
 
 	if *cfPath == "" {
 		flag.Usage()

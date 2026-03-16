@@ -9,9 +9,9 @@ import (
 	"log"
 	"os"
 	"runtime/debug"
-	"strings"
 
 	"github.com/konflux-ci/capo/pkg"
+	"github.com/konflux-ci/capo/pkg/buildargs"
 	"github.com/konflux-ci/capo/pkg/containerfile"
 )
 
@@ -41,13 +41,19 @@ func parseArgs() (args, error) {
 		"build-arg",
 		"Build argument passed to buildah in the form KEY=VALUE. Can be used multiple times.",
 		func(s string) error {
-			parts := strings.Split(s, "=")
-			if len(parts) != 2 || parts[0] == "" {
+			key, value, err := buildargs.ParseBuildArgLine(s)
+			if err != nil {
 				return ErrBuildArg
 			}
-			buildArgs[parts[0]] = parts[1]
+			buildArgs[key] = value
 			return nil
 		},
+	)
+
+	buildArgFile := flag.String(
+		"build-arg-file",
+		"",
+		"Path to a file of build arguments (one KEY=VALUE per line). Read before --build-arg values.",
 	)
 
 	target := flag.String(
@@ -57,6 +63,14 @@ func parseArgs() (args, error) {
 	)
 
 	flag.Parse()
+
+	if *buildArgFile != "" {
+		fileArgs, err := buildargs.ParseBuildArgFile(*buildArgFile)
+		if err != nil {
+			return args{}, fmt.Errorf("parsing build-arg-file: %w", err)
+		}
+		buildArgs = buildargs.MergeBuildArgs(fileArgs, buildArgs)
+	}
 
 	if *cfPath == "" {
 		flag.Usage()
