@@ -46,7 +46,7 @@ func TestParseBuiltinArgs(t *testing.T) {
 		t.Fatalf("Parsing failed: %v", err)
 	}
 
-	if diff := cmp.Diff(actual, expected); diff != "" {
+	if diff := cmp.Diff(expected, actual); diff != "" {
 		t.Errorf("Parse() result mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -374,6 +374,19 @@ func TestParse(t *testing.T) {
 				},
 			},
 		},
+		"duplicate stage names": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							FROM quay.io/fedora:42 AS builder
+							FROM scratch
+							COPY --from=builder /app /app`,
+			expected: []Stage{
+				{Alias: "builder", Base: "quay.io/rhel:9", Copies: []Copy{}},
+				{Alias: "builder", Base: "quay.io/fedora:42", Copies: []Copy{}},
+				{Alias: FinalStage, Base: "scratch", Copies: []Copy{
+					{From: "builder", Sources: []string{"/app"}, Destination: "/app", Type: CopyTypeBuilder},
+				}},
+			},
+		},
 		"complex multi-stage with multiple final copies": {
 			containerfile: `FROM docker.io/library/fedora:latest AS builder1
 							FROM docker.io/alpine/helm:latest AS builder2
@@ -437,7 +450,7 @@ func TestParse(t *testing.T) {
 				t.Fatalf("Parsing failed: %v", err)
 			}
 
-			if diff := cmp.Diff(actual, test.expected); diff != "" {
+			if diff := cmp.Diff(test.expected, actual); diff != "" {
 				t.Errorf("Parse() result mismatch (-want +got):\n%s", diff)
 			}
 		})

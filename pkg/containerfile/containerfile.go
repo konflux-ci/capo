@@ -89,7 +89,7 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 		rawStages = stagesTargeted
 	}
 
-	aliasToPullspec := mapAliasesToPullspecs(rawStages)
+	pullspecs := resolvePullspecs(rawStages)
 	stageNames := make([]string, 0)
 
 	for i, s := range rawStages {
@@ -105,7 +105,7 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 
 		res = append(res, Stage{
 			Alias:  s.Name,
-			Base:   aliasToPullspec[s.Name],
+			Base:   pullspecs[i],
 			Copies: copies,
 		})
 	}
@@ -123,23 +123,18 @@ func argsMapToSlice(m map[string]string) []string {
 	return s
 }
 
-// mapAliasesToPullspecs uses the passed imagebuilder.Stage structs to create
-// a mapping between stage aliases and the base image pullspecs for those stages.
-func mapAliasesToPullspecs(stages []imagebuilder.Stage) map[string]string {
-	res := make(map[string]string)
+// resolvePullspecs returns the base image pullspec for each stage, in order.
+func resolvePullspecs(stages []imagebuilder.Stage) []string {
+	res := make([]string, 0, len(stages))
 
-	for i, s := range stages {
-		alias := s.Name
-		if i == len(stages)-1 {
-			alias = FinalStage
-		}
-
+	for _, s := range stages {
 		headingEnv := argsMapToSlice(s.Builder.HeadingArgs)
 		userEnv := argsMapToSlice(s.Builder.Args)
 		env := append(headingEnv, userEnv...)
 
 		fromNode := s.Node.Children[0]
-		res[alias], _ = imagebuilder.ProcessWord(fromNode.Next.Value, env)
+		pullspec, _ := imagebuilder.ProcessWord(fromNode.Next.Value, env)
+		res = append(res, pullspec)
 	}
 
 	return res

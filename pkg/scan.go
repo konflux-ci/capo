@@ -229,10 +229,10 @@ func getPackageSources(
 		}
 
 		res = append(res, packageSource{
-			alias:          stage.Alias,
-			pullspec:       stage.Base,
+			alias:      stage.Alias,
+			pullspec:   stage.Base,
 			digestBase: digestPullspec,
-			sources:        stageToSources[stage],
+			sources:    stageToSources[stage],
 		})
 
 		// the processed stage must be deleted from stageToSources so it only
@@ -250,10 +250,10 @@ func getPackageSources(
 		}
 
 		res = append(res, packageSource{
-			alias:          stage.Alias,
-			pullspec:       stage.Base,
+			alias:      stage.Alias,
+			pullspec:   stage.Base,
 			digestBase: digestPullspec,
-			sources:        sources,
+			sources:    sources,
 		})
 	}
 
