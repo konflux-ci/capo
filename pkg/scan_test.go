@@ -3,54 +3,12 @@
 package capo
 
 import (
-	"slices"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/konflux-ci/capo/pkg/containerfile"
 )
-
-// comparePackageSources compares two slices of packageSource, ignoring order
-func comparePackageSources(a, b []packageSource) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	bMatched := make([]bool, len(b))
-	for _, aItem := range a {
-		found := false
-		for j, bItem := range b {
-			if !bMatched[j] && packageSourceEqual(aItem, bItem) {
-				bMatched[j] = true
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	return true
-}
-
-// packageSourceEqual compares two packageSource structs
-func packageSourceEqual(a, b packageSource) bool {
-	if a.alias != b.alias || a.pullspec != b.pullspec || a.digestBase != b.digestBase {
-		return false
-	}
-
-	if len(a.sources) != len(b.sources) {
-		return false
-	}
-
-	for _, aSource := range a.sources {
-		if !slices.Contains(b.sources, aSource) {
-			return false
-		}
-	}
-
-	return true
-}
 
 func TestGetPackageSources(t *testing.T) {
 	t.Parallel()
@@ -530,8 +488,14 @@ func TestGetPackageSources(t *testing.T) {
 				t.Fatalf("getPackageSources returned error: %v", err)
 			}
 
-			if !comparePackageSources(actual, test.expected) {
-				t.Fatalf("actual package sources %+v, don't match the expected %+v", actual, test.expected)
+			diff := cmp.Diff(
+				test.expected, actual,
+				cmp.AllowUnexported(packageSource{}),
+				cmpopts.SortSlices(func(a, b packageSource) bool { return a.alias < b.alias }),
+				cmpopts.EquateEmpty(),
+			)
+			if diff != "" {
+				t.Errorf("getPackageSources() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

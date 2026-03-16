@@ -3,14 +3,14 @@
 package capo
 
 import (
-	"encoding/json"
 	"errors"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/uuid"
 	"github.com/konflux-ci/capo/pkg/containerfile"
 	"github.com/magefile/mage/sh"
 	"go.podman.io/storage"
 	"os"
-	"sort"
 	"strings"
 	"testing"
 )
@@ -52,8 +52,22 @@ func (testCase *TestCase) run(t *testing.T, store storage.Store) error {
 	if err != nil {
 		return err
 	}
-	if !comparePackagesOrderIndependent(testCase.ExpectedResult.Packages, result.Packages, t) {
-		t.Errorf("package comparison failed")
+	// Compare packages order-independently using go-cmp:
+	// - SortSlices: ensures comparison is order-independent by sorting on PackageURL
+	// - EquateEmpty: treats nil and empty slices as equal
+	// - FilterPath on Pullspec: strips @sha256: digests before comparing pullspecs,
+	//   since actual digests vary between builds and should not cause test failures
+	diff := cmp.Diff(testCase.ExpectedResult.Packages, result.Packages,
+		cmpopts.SortSlices(func(a, b PackageMetadataItem) bool { return a.PackageURL < b.PackageURL }),
+		cmpopts.EquateEmpty(),
+		cmp.FilterPath(func(p cmp.Path) bool {
+			return p.String() == "Pullspec"
+		}, cmp.Comparer(func(a, b string) bool {
+			return normalizePullspec(a) == normalizePullspec(b)
+		})),
+	)
+	if diff != "" {
+		t.Errorf("package comparison mismatch (-want +got):\n%s", diff)
 		return errors.New("package comparison failed")
 	}
 	return nil
@@ -100,102 +114,11 @@ func (buildDef *BuildDefinition) buildImage(store storage.Store, isBuilder bool)
 	return sh.RunV("buildah", args...)
 }
 
-// normalizePullspecForComparison extracts the image reference part from a pullspec,
-// removing the digest portion for flexible comparison in tests.
-func normalizePullspecForComparison(pullspec string) string {
+func normalizePullspec(pullspec string) string {
 	if atIndex := strings.Index(pullspec, "@sha256:"); atIndex != -1 {
 		return pullspec[:atIndex]
 	}
 	return pullspec
-}
-
-// createPackageKey creates a unique key for a package based on its identifying fields
-func createPackageKey(pkg PackageMetadataItem) (string, error) {
-	// Sort the Checksums slice to ensure consistent ordering of slices
-	if len(pkg.Checksums) > 1 {
-		sort.Strings(pkg.Checksums)
-	}
-
-	// Create a copy of the package with normalized pullspec for key generation
-	normalizedPkg := pkg
-	normalizedPkg.Pullspec = normalizePullspecForComparison(pkg.Pullspec)
-
-	// Use JSON marshalling to create a unique key that includes all fields
-	// This is more robust than manual string concatenation and handles edge cases
-	jsonBytes, err := json.Marshal(normalizedPkg)
-	if err != nil {
-		return "", err
-	}
-	return string(jsonBytes), nil
-}
-
-// countPackages counts occurrences of each package in the slice and returns
-// a map keyed by package JSON with values being the count. This is able to track
-// even duplicated packages created by a Syft scan by keeping the number of occurrences
-// in the resulting map.
-func countPackages(packages []PackageMetadataItem) map[string]int {
-	countMap := make(map[string]int)
-	for _, pkg := range packages {
-		key, err := createPackageKey(pkg)
-		if err != nil {
-			continue
-		}
-		countMap[key]++
-	}
-	return countMap
-}
-
-// comparePackagesOrderIndependent compares two package slices ignoring order.
-// Returns true if they contain the same packages. Logs detailed differences on failure.
-func comparePackagesOrderIndependent(expected, actual []PackageMetadataItem, t *testing.T) bool {
-	result := true
-	if len(expected) != len(actual) {
-		t.Logf("Length mismatch: expected %d packages, got %d packages", len(expected), len(actual))
-		result = false
-	}
-
-	expectedMap := countPackages(expected)
-	actualMap := countPackages(actual)
-	// Compare the maps and log differences
-	if len(expectedMap) != len(actualMap) {
-		t.Logf("Different number of unique package types: expected %d, got %d", len(expectedMap), len(actualMap))
-		result = false
-	}
-
-	// Find missing packages (in expected but not in actual)
-	missingCount := 0
-	for key, expectedCount := range expectedMap {
-		if actualCount, exists := actualMap[key]; !exists {
-			t.Logf("Missing package: %s (expected %d instances)", key, expectedCount)
-			missingCount++
-			result = false
-		} else if expectedCount > actualCount {
-			t.Logf("Missing %d instances of package: %s (expected %d, got %d)", expectedCount-actualCount, key, expectedCount, actualCount)
-			missingCount++
-			result = false
-		}
-	}
-
-	// Find extra packages (in actual but not in expected)
-	extraCount := 0
-	for key, actualCount := range actualMap {
-		if expectedCount, exists := expectedMap[key]; !exists {
-			t.Logf("Extra package: %s (found %d instances)", key, actualCount)
-			extraCount++
-			result = false
-		} else if actualCount > expectedCount {
-			t.Logf("Extra %d instances of package: %s (expected %d, got %d)", actualCount-expectedCount, key, expectedCount, actualCount)
-			extraCount++
-			result = false
-		}
-	}
-
-	// Log summary
-	if missingCount > 0 || extraCount > 0 {
-		t.Logf("Package comparison summary: %d missing, %d extra", missingCount, extraCount)
-	}
-
-	return result
 }
 
 // cleanUpIntermediateLayers deletes all images without names/tags from the store.
