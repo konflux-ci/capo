@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/openshift/imagebuilder"
@@ -37,6 +38,23 @@ type Copy struct {
 	Type CopyType
 }
 
+// A mount reference from a RUN --mount instruction in a Containerfile stage.
+type Mount struct {
+	// Alias of the stage the mount references when Mount.Type==MountTypeBuilder
+	// or a pullspec when Mount.Type==MountTypeExternal
+	From string
+	// Type of the mount. Specifies whether it references a builder stage
+	// or an external image directly.
+	Type MountType
+}
+
+type MountType int
+
+const (
+	MountTypeBuilder MountType = iota
+	MountTypeExternal
+)
+
 // A builder or final stage in a Containerfile
 type Stage struct {
 	// Alias of the builder stage or equal to FinalStage if final
@@ -45,6 +63,8 @@ type Stage struct {
 	Base string
 	// Builder copies in this stage
 	Copies []Copy
+	// Mount references in this stage
+	Mounts []Mount
 }
 
 type BuildOptions struct {
@@ -98,7 +118,7 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 			s.Name = FinalStage
 		}
 
-		copies, err := getBuilderCopiesInStage(s, stageNames)
+		copies, mounts, err := parseStageRefs(s, stageNames)
 		if err != nil {
 			return res, err
 		}
@@ -107,6 +127,7 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 			Alias:  s.Name,
 			Base:   pullspecs[i],
 			Copies: copies,
+			Mounts: mounts,
 		})
 	}
 
@@ -140,24 +161,26 @@ func resolvePullspecs(stages []imagebuilder.Stage) []string {
 	return res
 }
 
-// getBuilderCopiesInStage parses the AST for the passed imagebuilder.Stage and
-// returns a slice of Copy structs, specifying which builder-type copies are
-// present in that stage.
+// parseStageRefs parses the AST for the passed imagebuilder.Stage and
+// returns slices of Copy and Mount structs found in the stage.
+//
 // A COPY command is builder-type if the "--from" flag is specified and it copies from
 // a builder stage or directly from an image.
-// Uses the passed previous stageNames to specify whether copies are from a stage
-// or directly from an image.
+// A Mount is extracted from RUN --mount instructions that specify a "from" option.
+// Uses the passed previous stageNames to specify whether references are to a stage
+// or directly to an image.
 //
 // WORKDIR commands are taken into account and the destinations of COPY commands
 // are resolved to be absolute instead of relative, where needed. If the Containerfile
 // contains builder-type COPY commands that copy to a relative destination and don't
-// specify the WORKDIR in advance, getBuilderCopiesInStage returns a workdirError.
+// specify the WORKDIR in advance, parseStageRefs returns a workdirError.
 // This limitation exists because each base image can set its own WORKDIR and this cannot
 // be determined based on just the Containerfile.
 //
 // WARNING: named contexts in the Containerfile are not supported
-func getBuilderCopiesInStage(s imagebuilder.Stage, stageNames []string) ([]Copy, error) {
+func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount, error) {
 	copies := make([]Copy, 0)
+	mounts := make([]Mount, 0)
 	workdir := ""
 	headingEnv := argsMapToSlice(s.Builder.HeadingArgs)
 	userEnv := argsMapToSlice(s.Builder.Args)
@@ -176,7 +199,7 @@ func getBuilderCopiesInStage(s imagebuilder.Stage, stageNames []string) ([]Copy,
 				// if the path is relative, it is relative to the last set workdir
 				// so we need to fail if a WORKDIR command was not yet specified
 				if workdir == "" {
-					return copies, fmt.Errorf("%w: %q", ErrAmbiguousRelativePath, child.Original)
+					return copies, mounts, fmt.Errorf("%w: %q", ErrAmbiguousRelativePath, child.Original)
 				}
 
 				workdir = filepath.Join(workdir, dirPath)
@@ -185,16 +208,67 @@ func getBuilderCopiesInStage(s imagebuilder.Stage, stageNames []string) ([]Copy,
 		case "copy":
 			cp, err := parseCopy(child, workdir, env, stageNames)
 			if err != nil {
-				return copies, err
+				return copies, mounts, err
 			}
 
 			if cp != nil {
 				copies = append(copies, *cp)
 			}
+
+		case "run":
+			mounts = append(mounts, parseMounts(child, env, stageNames)...)
 		}
 	}
 
-	return copies, nil
+	return copies, mounts, nil
+}
+
+// isStageRef returns true if ref matches a known stage, either by name or by
+// numeric index.
+func isStageRef(ref string, stageNames []string) bool {
+	if slices.Contains(stageNames, ref) {
+		return true
+	}
+	if i, err := strconv.Atoi(ref); err == nil && 0 <= i && i < len(stageNames) {
+		return true
+	}
+	return false
+}
+
+// parseMounts extracts Mount references from a RUN instruction's --mount flags.
+// Only mounts with a "from" option are returned. Uses the passed previous stage
+// names to classify whether the mount references a builder stage or an external image.
+func parseMounts(node *parser.Node, env []string, stageNames []string) []Mount {
+	var mounts []Mount
+	for _, fl := range node.Flags {
+		if !strings.HasPrefix(fl, "--mount=") {
+			continue
+		}
+
+		mountOpts := strings.TrimPrefix(fl, "--mount=")
+		from := ""
+		for opt := range strings.SplitSeq(mountOpts, ",") {
+			if val, ok := strings.CutPrefix(opt, "from="); ok {
+				from, _ = imagebuilder.ProcessWord(val, env)
+				break
+			}
+		}
+
+		if from == "" {
+			continue
+		}
+
+		mountType := MountTypeBuilder
+		if !isStageRef(from, stageNames) {
+			mountType = MountTypeExternal
+		}
+
+		mounts = append(mounts, Mount{
+			From: from,
+			Type: mountType,
+		})
+	}
+	return mounts
 }
 
 // parseCopy takes a raw dockerfile parser Node and optionally returns a pointer
@@ -249,7 +323,7 @@ func parseCopy(node *parser.Node, workdir string, env []string, stageNames []str
 		}
 
 		cpType := CopyTypeBuilder
-		if !slices.Contains(stageNames, from) {
+		if !isStageRef(from, stageNames) {
 			cpType = CopyTypeExternal
 		}
 
