@@ -1,0 +1,15 @@
+# Snyk (https://snyk.io) policy file, patches or ignores known vulnerabilities.
+version: v1.25.0
+ignore:
+  SNYK-GOLANG-GITHUBCOMSIGSTOREFULCIOPKGCONFIG-14928061:
+    - '*':
+        reason: Permanently ignored
+        expires: never
+  SNYK-GOLANG-GITHUBCOMSIGSTOREFULCIOPKGIDENTITY-14220411:
+    - '*':
+        reason: Permanently ignored
+        expires: never
+  SNYK-GOLANG-GITHUBCOMSIGSTOREFULCIOPKGIDENTITYBASE-14928060:
+    - '*':
+        reason: Permanently ignored
+        expires: never
