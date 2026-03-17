@@ -192,6 +192,86 @@ func TestProbe(t *testing.T) {
 				ExtraImages: []Image{},
 			},
 		},
+		"extra image from RUN --mount=from": {
+			containerfile: `FROM quay.io/rhel:9
+							RUN --mount=type=bind,from=quay.io/tools:1,src=/bin/tool,dst=/tmp/tool /tmp/tool --version`,
+			opts: ProbeOpts{
+				Tag:    "quay.io/image:latest",
+				Target: "",
+				Args:   make(map[string]string),
+			},
+			digests: map[string]string{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/tools:1":      "toolsdigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImages: []Image{
+					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				},
+				ExtraImages: []Image{
+					{Pullspec: "quay.io/tools:1", Digest: "toolsdigest"},
+				},
+			},
+		},
+		"RUN --mount=from builder stage is not an extra image": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							FROM quay.io/fedora:42
+							RUN --mount=type=bind,from=builder,src=/app,dst=/app ls /app`,
+			opts: ProbeOpts{
+				Tag:    "quay.io/image:latest",
+				Target: "",
+				Args:   make(map[string]string),
+			},
+			digests: map[string]string{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/fedora:42":    "fedoradigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImages: []Image{
+					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+					{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
+				},
+				ExtraImages: []Image{},
+			},
+		},
+		"COPY --from numeric stage index is builder image": {
+			containerfile: `FROM quay.io/rhel:9
+							WORKDIR /app
+							COPY . .
+							FROM quay.io/fedora:42
+							COPY --from=0 /app /app`,
+			opts: ProbeOpts{
+				Tag:    "quay.io/image:latest",
+				Target: "",
+				Args:   make(map[string]string),
+			},
+			digests: map[string]string{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/fedora:42":    "fedoradigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImages: []Image{
+					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+					{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
+				},
+				ExtraImages: []Image{},
+			},
+		},
 		// The following test exists to match inconsistent behaviour in buildah:
 		// https://github.com/containers/buildah/issues/6731
 		"duplicate stage names reports both base images": {

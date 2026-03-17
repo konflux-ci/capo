@@ -25,6 +25,7 @@ func TestParseBuiltinArgs(t *testing.T) {
 			Alias:  "builder",
 			Base:   expectedPullspec,
 			Copies: []Copy{},
+			Mounts: []Mount{},
 		},
 		{
 			Alias: FinalStage,
@@ -36,6 +37,7 @@ func TestParseBuiltinArgs(t *testing.T) {
 					Destination: "/usr/bin/binary",
 				},
 			},
+			Mounts: []Mount{},
 		},
 	}
 
@@ -105,6 +107,7 @@ func TestParse(t *testing.T) {
 					Alias:  "builder",
 					Base:   "docker.io/library/alpine:latest",
 					Copies: []Copy{},
+					Mounts: []Mount{},
 				},
 				{
 					Alias: FinalStage,
@@ -123,6 +126,7 @@ func TestParse(t *testing.T) {
 							Type:        CopyTypeBuilder,
 						},
 					},
+					Mounts: []Mount{},
 				},
 			},
 		},
@@ -146,6 +150,7 @@ func TestParse(t *testing.T) {
 							Type:        CopyTypeExternal,
 						},
 					},
+					Mounts: []Mount{},
 				},
 			},
 		},
@@ -160,11 +165,13 @@ func TestParse(t *testing.T) {
 					Alias:  "builder1",
 					Base:   "docker.io/library/fedora:latest",
 					Copies: []Copy{},
+					Mounts: []Mount{},
 				},
 				{
 					Alias:  "builder2",
 					Base:   "docker.io/alpine/helm:latest",
 					Copies: []Copy{},
+					Mounts: []Mount{},
 				},
 				{
 					Alias: FinalStage,
@@ -183,6 +190,7 @@ func TestParse(t *testing.T) {
 							Type:        CopyTypeBuilder,
 						},
 					},
+					Mounts: []Mount{},
 				},
 			},
 		},
@@ -197,6 +205,7 @@ func TestParse(t *testing.T) {
 					Alias:  "builder1",
 					Base:   "docker.io/library/fedora:latest",
 					Copies: []Copy{},
+					Mounts: []Mount{},
 				},
 				{
 					Alias: "builder2",
@@ -209,6 +218,7 @@ func TestParse(t *testing.T) {
 							Type:        CopyTypeBuilder,
 						},
 					},
+					Mounts: []Mount{},
 				},
 				{
 					Alias: FinalStage,
@@ -221,6 +231,7 @@ func TestParse(t *testing.T) {
 							Type:        CopyTypeBuilder,
 						},
 					},
+					Mounts: []Mount{},
 				},
 			},
 		},
@@ -240,6 +251,7 @@ func TestParse(t *testing.T) {
 					Alias:  "builder",
 					Base:   "docker.io/alpine/helm:latest",
 					Copies: []Copy{},
+					Mounts: []Mount{},
 				},
 				{
 					Alias: FinalStage,
@@ -288,6 +300,7 @@ func TestParse(t *testing.T) {
 							Type:        CopyTypeBuilder,
 						},
 					},
+					Mounts: []Mount{},
 				},
 			},
 		},
@@ -302,6 +315,7 @@ func TestParse(t *testing.T) {
 					Alias:  "builder1",
 					Base:   "docker.io/library/fedora:latest",
 					Copies: []Copy{},
+					Mounts: []Mount{},
 				},
 				{
 					Alias: "builder2",
@@ -314,6 +328,7 @@ func TestParse(t *testing.T) {
 							Type:        CopyTypeBuilder,
 						},
 					},
+					Mounts: []Mount{},
 				},
 				{
 					Alias: FinalStage,
@@ -326,6 +341,7 @@ func TestParse(t *testing.T) {
 							Type:        CopyTypeBuilder,
 						},
 					},
+					Mounts: []Mount{},
 				},
 			},
 		},
@@ -341,6 +357,7 @@ func TestParse(t *testing.T) {
 					Alias:  "builder1",
 					Base:   "docker.io/library/fedora:latest",
 					Copies: []Copy{},
+					Mounts: []Mount{},
 				},
 				{
 					Alias: "builder2",
@@ -359,6 +376,7 @@ func TestParse(t *testing.T) {
 							Type:        CopyTypeBuilder,
 						},
 					},
+					Mounts: []Mount{},
 				},
 				{
 					Alias: FinalStage,
@@ -371,6 +389,134 @@ func TestParse(t *testing.T) {
 							Type:        CopyTypeBuilder,
 						},
 					},
+					Mounts: []Mount{},
+				},
+			},
+		},
+		"COPY --from numeric stage index": {
+			containerfile: `FROM quay.io/rhel:9
+							FROM scratch
+							COPY --from=0 /usr/bin/binary /usr/bin/binary`,
+			expected: []Stage{
+				{
+					Alias:  "0",
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+				},
+				{
+					Alias: FinalStage,
+					Base:  "scratch",
+					Copies: []Copy{
+						{
+							From:        "0",
+							Sources:     []string{"/usr/bin/binary"},
+							Destination: "/usr/bin/binary",
+							Type:        CopyTypeBuilder,
+						},
+					},
+					Mounts: []Mount{},
+				},
+			},
+		},
+		"COPY --from numeric index with named stage": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							FROM scratch
+							COPY --from=0 /usr/bin/binary /usr/bin/binary`,
+			expected: []Stage{
+				{
+					Alias:  "builder",
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+				},
+				{
+					Alias: FinalStage,
+					Base:  "scratch",
+					Copies: []Copy{
+						{
+							From:        "0",
+							Sources:     []string{"/usr/bin/binary"},
+							Destination: "/usr/bin/binary",
+							Type:        CopyTypeBuilder,
+						},
+					},
+					Mounts: []Mount{},
+				},
+			},
+		},
+		"COPY --from numeric index out of bounds is external image": {
+			containerfile: `FROM quay.io/rhel:9
+							COPY --from=5 /usr/bin/binary /usr/bin/binary`,
+			expected: []Stage{
+				{
+					Alias: FinalStage,
+					Base:  "quay.io/rhel:9",
+					Copies: []Copy{
+						{
+							From:        "5",
+							Sources:     []string{"/usr/bin/binary"},
+							Destination: "/usr/bin/binary",
+							Type:        CopyTypeExternal,
+						},
+					},
+					Mounts: []Mount{},
+				},
+			},
+		},
+		"RUN --mount=from external image": {
+			containerfile: `FROM quay.io/rhel:9
+							RUN --mount=type=bind,from=quay.io/tools:1,src=/bin/tool,dst=/tmp/tool /tmp/tool --version`,
+			expected: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{
+						{From: "quay.io/tools:1", Type: MountTypeExternal},
+					},
+				},
+			},
+		},
+		"RUN --mount=from builder stage": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							FROM scratch
+							RUN --mount=type=bind,from=builder,src=/app,dst=/app ls /app`,
+			expected: []Stage{
+				{
+					Alias:  "builder",
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+				},
+				{
+					Alias:  FinalStage,
+					Base:   "scratch",
+					Copies: []Copy{},
+					Mounts: []Mount{
+						{From: "builder", Type: MountTypeBuilder},
+					},
+				},
+			},
+		},
+		"RUN --mount=from numeric stage index": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							FROM scratch
+							RUN --mount=type=bind,from=0,src=/app,dst=/app ls /app`,
+			expected: []Stage{
+				{
+					Alias:  "builder",
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+				},
+				{
+					Alias:  FinalStage,
+					Base:   "scratch",
+					Copies: []Copy{},
+					Mounts: []Mount{
+						{From: "0", Type: MountTypeBuilder},
+					},
 				},
 			},
 		},
@@ -380,11 +526,11 @@ func TestParse(t *testing.T) {
 							FROM scratch
 							COPY --from=builder /app /app`,
 			expected: []Stage{
-				{Alias: "builder", Base: "quay.io/rhel:9", Copies: []Copy{}},
-				{Alias: "builder", Base: "quay.io/fedora:42", Copies: []Copy{}},
+				{Alias: "builder", Base: "quay.io/rhel:9", Copies: []Copy{}, Mounts: []Mount{}},
+				{Alias: "builder", Base: "quay.io/fedora:42", Copies: []Copy{}, Mounts: []Mount{}},
 				{Alias: FinalStage, Base: "scratch", Copies: []Copy{
 					{From: "builder", Sources: []string{"/app"}, Destination: "/app", Type: CopyTypeBuilder},
-				}},
+				}, Mounts: []Mount{}},
 			},
 		},
 		"complex multi-stage with multiple final copies": {
@@ -400,6 +546,7 @@ func TestParse(t *testing.T) {
 					Alias:  "builder1",
 					Base:   "docker.io/library/fedora:latest",
 					Copies: []Copy{},
+					Mounts: []Mount{},
 				},
 				{
 					Alias: "builder2",
@@ -412,6 +559,7 @@ func TestParse(t *testing.T) {
 							Type:        CopyTypeBuilder,
 						},
 					},
+					Mounts: []Mount{},
 				},
 				{
 					Alias: FinalStage,
@@ -436,6 +584,7 @@ func TestParse(t *testing.T) {
 							Type:        CopyTypeBuilder,
 						},
 					},
+					Mounts: []Mount{},
 				},
 			},
 		},

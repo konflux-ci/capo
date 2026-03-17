@@ -113,31 +113,46 @@ func resolveExtraImages(repo repository.Repository, stages []containerfile.Stage
 	res := make([]Image, 0)
 	seen := make(map[string]bool)
 
+	addImage := func(pullspec string) error {
+		if seen[pullspec] {
+			return nil
+		}
+		seen[pullspec] = true
+
+		digest := ""
+		var err error
+
+		if repo != nil {
+			digest, err = repo.ResolveDigest(pullspec)
+			if err != nil {
+				return fmt.Errorf("%w %q: %w", ErrDigestResolve, pullspec, err)
+			}
+		}
+
+		res = append(res, Image{
+			Pullspec: pullspec,
+			Digest:   digest,
+		})
+		return nil
+	}
+
 	for _, stage := range stages {
 		for _, cp := range stage.Copies {
 			if cp.Type != containerfile.CopyTypeExternal {
 				continue
 			}
+			if err := addImage(cp.From); err != nil {
+				return nil, err
+			}
+		}
 
-			if seen[cp.From] {
+		for _, mount := range stage.Mounts {
+			if mount.Type != containerfile.MountTypeExternal {
 				continue
 			}
-			seen[cp.From] = true
-
-			digest := ""
-			var err error
-
-			if repo != nil {
-				digest, err = repo.ResolveDigest(cp.From)
-				if err != nil {
-					return nil, fmt.Errorf("%w %q: %w", ErrDigestResolve, stage.Base, err)
-				}
+			if err := addImage(mount.From); err != nil {
+				return nil, err
 			}
-
-			res = append(res, Image{
-				Pullspec: cp.From,
-				Digest:   digest,
-			})
 		}
 	}
 
