@@ -1,3 +1,5 @@
+// Package containerfile parses Containerfiles (Dockerfiles) into a structured
+// representation of build stages, COPY commands, and RUN --mount references.
 package containerfile
 
 import (
@@ -13,12 +15,17 @@ import (
 	"github.com/openshift/imagebuilder/dockerfile/parser"
 )
 
+// FinalStage is the sentinel alias assigned to the last stage in a parsed
+// Containerfile, distinguishing it from named builder stages.
 var FinalStage string = ""
 
+// CopyType classifies a COPY command by its source origin.
 type CopyType int
 
 const (
+	// CopyTypeBuilder indicates a COPY from a previous builder stage.
 	CopyTypeBuilder CopyType = iota
+	// CopyTypeExternal indicates a COPY directly from an external image.
 	CopyTypeExternal
 )
 
@@ -48,10 +55,13 @@ type Mount struct {
 	Type MountType
 }
 
+// MountType classifies a RUN --mount reference by its source origin.
 type MountType int
 
 const (
+	// MountTypeBuilder indicates a mount from a previous builder stage.
 	MountTypeBuilder MountType = iota
+	// MountTypeExternal indicates a mount directly from an external image.
 	MountTypeExternal
 )
 
@@ -67,6 +77,7 @@ type Stage struct {
 	Mounts []Mount
 }
 
+// BuildOptions controls how a Containerfile is parsed.
 type BuildOptions struct {
 	// Build arguments passed to buildah for the build
 	Args map[string]string
@@ -74,8 +85,15 @@ type BuildOptions struct {
 	Target string
 }
 
+// ErrTargetNotFound is returned when the target stage specified in
+// BuildOptions does not exist in the Containerfile.
 var ErrTargetNotFound = errors.New("specified target stage was not found in the containerfile")
+
+// ErrAmbiguousRelativePath is returned when a COPY destination or WORKDIR uses
+// a relative path but no prior WORKDIR has been set in that stage.
 var ErrAmbiguousRelativePath = errors.New("relative path in containerfile is ambiguous")
+
+// ErrParse is returned when the Containerfile cannot be parsed.
 var ErrParse = errors.New("error while parsing containerfile")
 
 // Parse reads a Containerfile from the passed reader and uses the passed
