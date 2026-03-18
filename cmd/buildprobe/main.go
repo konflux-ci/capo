@@ -31,7 +31,7 @@ func logRevision() {
 }
 
 type args struct {
-	// TODO: description
+	// Tag of the built image
 	tag string
 	// Path to the containerfile to parse
 	containerfilePath string
