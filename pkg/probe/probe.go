@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/konflux-ci/capo/pkg/containerfile"
@@ -75,20 +76,101 @@ func Probe(opts ProbeOpts, repo repository.Repository) (BuildMetadata, error) {
 		return meta, fmt.Errorf("%w: %w", ErrParseContainerfile, err)
 	}
 
-	baseImages, err := resolveBaseImages(repo, stages)
+	reachable := reachableStages(stages)
+
+	baseImages, err := resolveBaseImages(repo, reachable)
 	if err != nil {
 		return meta, err
 	}
 
 	meta.BaseImages = baseImages
 
-	extraImages, err := resolveExtraImages(repo, stages)
+	extraImages, err := resolveExtraImages(repo, reachable)
 	if err != nil {
 		return meta, err
 	}
 	meta.ExtraImages = extraImages
 
 	return meta, nil
+}
+
+// reachableStages returns only the stages transitively reachable (via BFS) from the
+// final stage via FROM, COPY --from, and RUN --mount references.
+func reachableStages(stages []containerfile.Stage) []containerfile.Stage {
+	if len(stages) == 0 {
+		return stages
+	}
+
+	// Map stage aliases to all their indexes. Multiple stages can share the
+	// same alias. Buildah builds all matching stages, so we must track every
+	// occurrence. The final stage has Alias==FinalStage so it won't collide
+	// with named builder stages.
+	stagesByAlias := make(map[string][]int)
+	for stageIndex, stage := range stages {
+		stagesByAlias[stage.Alias] = append(stagesByAlias[stage.Alias], stageIndex)
+	}
+
+	// findMatchingStages returns all stage indexes that match a reference,
+	// either by alias or by numeric index.
+	findMatchingStages := func(ref string) ([]int, bool) {
+		if indexes, ok := stagesByAlias[ref]; ok {
+			return indexes, true
+		}
+		if stageIndex, err := strconv.Atoi(ref); err == nil && 0 <= stageIndex && stageIndex < len(stages) {
+			return []int{stageIndex}, true
+		}
+		return nil, false
+	}
+
+	isReachable := make([]bool, len(stages))
+	stagesToProcess := []int{len(stages) - 1}
+	isReachable[len(stages)-1] = true
+
+	enqueue := func(stageIndex int) {
+		if !isReachable[stageIndex] {
+			isReachable[stageIndex] = true
+			stagesToProcess = append(stagesToProcess, stageIndex)
+		}
+	}
+
+	for len(stagesToProcess) > 0 {
+		stageIndex := stagesToProcess[0]
+		stagesToProcess = stagesToProcess[1:]
+		stage := stages[stageIndex]
+
+		for _, ref := range stageRefs(stage) {
+			if matches, ok := findMatchingStages(ref); ok {
+				for _, matchIndex := range matches {
+					enqueue(matchIndex)
+				}
+			}
+		}
+	}
+
+	reachableStages := make([]containerfile.Stage, 0, len(stages))
+	for stageIndex, stage := range stages {
+		if isReachable[stageIndex] {
+			reachableStages = append(reachableStages, stage)
+		}
+	}
+	return reachableStages
+}
+
+// stageRefs returns all references to other stages from a given stage:
+// the FROM base image and all builder-type COPY --from and RUN --mount refs.
+func stageRefs(stage containerfile.Stage) []string {
+	refs := []string{stage.Base}
+	for _, cp := range stage.Copies {
+		if cp.Type == containerfile.CopyTypeBuilder {
+			refs = append(refs, cp.From)
+		}
+	}
+	for _, mount := range stage.Mounts {
+		if mount.Type == containerfile.MountTypeBuilder {
+			refs = append(refs, mount.From)
+		}
+	}
+	return refs
 }
 
 func resolveBaseImages(repo repository.Repository, stages []containerfile.Stage) ([]Image, error) {

@@ -28,7 +28,10 @@ func TestProbe(t *testing.T) {
 	}{
 		"simple": {
 			containerfile: `FROM quay.io/rhel:9 as builder
-							FROM quay.io/fedora:42`,
+							WORKDIR /app
+							COPY . .
+							FROM quay.io/fedora:42
+							COPY --from=builder /app /app`,
 			opts: ProbeOpts{
 				Tag:    "quay.io/image:latest",
 				Target: "",
@@ -287,6 +290,36 @@ func TestProbe(t *testing.T) {
 				Args:   make(map[string]string),
 			},
 			digests: map[string]string{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/fedora:42":    "fedoradigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImages: []Image{
+					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+					{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
+				},
+				ExtraImages: []Image{},
+			},
+		},
+		"unreachable stage is excluded when target is set": {
+			containerfile: `FROM quay.io/alpine:3 AS unreachable
+							RUN echo hello
+							FROM quay.io/rhel:9 AS builder
+							COPY . .
+							FROM quay.io/fedora:42
+							COPY --from=builder /app /app`,
+			opts: ProbeOpts{
+				Tag:    "quay.io/image:latest",
+				Target: "",
+				Args:   make(map[string]string),
+			},
+			digests: map[string]string{
+				"quay.io/alpine:3":     "alpinedigest",
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":    "fedoradigest",
 				"quay.io/image:latest": "imagedigest",
