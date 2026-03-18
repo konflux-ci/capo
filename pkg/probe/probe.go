@@ -1,3 +1,6 @@
+// Package probe extracts build metadata from a Containerfile without
+// performing a build. It parses the Containerfile, identifies base and extra
+// images, and optionally resolves their digests via a Repository.
 package probe
 
 import (
@@ -10,17 +13,23 @@ import (
 	"github.com/konflux-ci/capo/pkg/repository"
 )
 
+// Image represents a container image identified by its pullspec and,
+// when resolved, its content digest.
 type Image struct {
 	Pullspec string
 	Digest   string
 }
 
+// BuildMetadata holds the images involved in a container build: the built
+// image itself, its base images (FROM lines), and any extra images referenced
+// via COPY --from or RUN --mount.
 type BuildMetadata struct {
 	Image       Image   `yaml:"image"`
 	BaseImages  []Image `yaml:"base_images"`
 	ExtraImages []Image `yaml:"extra_images"`
 }
 
+// ProbeOpts configures a Probe invocation.
 type ProbeOpts struct {
 	// Tag of the built image
 	// If empty, the built image won't be resolved.
@@ -33,9 +42,14 @@ type ProbeOpts struct {
 	Args map[string]string
 }
 
+// ErrParseContainerfile is returned when the Containerfile cannot be parsed.
 var ErrParseContainerfile = errors.New("could not parse containerfile")
+
+// ErrDigestResolve is returned when an image digest cannot be resolved.
 var ErrDigestResolve = errors.New("failed to resolve digest of image")
 
+// Probe parses the Containerfile described in opts and collects build metadata.
+// When repo is non-nil, image digests are resolved through the repository.
 func Probe(opts ProbeOpts, repo repository.Repository) (BuildMetadata, error) {
 	meta := BuildMetadata{}
 
