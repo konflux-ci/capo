@@ -34,18 +34,18 @@ var ErrBuildahStorageSetup = errors.New("error while setting up buildah storage"
 func NewBuildahStore() (ImageStore, error) {
 	// The containers/storage library requires this to run for some operations
 	if reexec.Init() {
-		return &BuildahStore{}, fmt.Errorf("%w: failed to init reexec", ErrBuildahStorageSetup)
+		return nil, fmt.Errorf("%w: failed to init reexec", ErrBuildahStorageSetup)
 	}
 
 	opts, err := storage.DefaultStoreOptions()
 	if err != nil {
-		return &BuildahStore{},
+		return nil,
 			fmt.Errorf("%w: failed to create default storage options: %w", ErrBuildahStorageSetup, err)
 	}
 
 	store, err := storage.GetStore(opts)
 	if err != nil {
-		return &BuildahStore{}, fmt.Errorf("%w: failed to create storage: %w", ErrBuildahStorageSetup, err)
+		return nil, fmt.Errorf("%w: failed to create storage: %w", ErrBuildahStorageSetup, err)
 	}
 
 	return &BuildahStore{
