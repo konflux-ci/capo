@@ -127,7 +127,10 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 		rawStages = stagesTargeted
 	}
 
-	pullspecs := resolvePullspecs(rawStages)
+	pullspecs, err := resolvePullspecs(rawStages)
+	if err != nil {
+		return nil, err
+	}
 	stageNames := make([]string, 0)
 
 	for i, s := range rawStages {
@@ -163,7 +166,7 @@ func argsMapToSlice(m map[string]string) []string {
 }
 
 // resolvePullspecs returns the base image pullspec for each stage, in order.
-func resolvePullspecs(stages []imagebuilder.Stage) []string {
+func resolvePullspecs(stages []imagebuilder.Stage) ([]string, error) {
 	res := make([]string, 0, len(stages))
 
 	for _, s := range stages {
@@ -172,11 +175,14 @@ func resolvePullspecs(stages []imagebuilder.Stage) []string {
 		env := append(headingEnv, userEnv...)
 
 		fromNode := s.Node.Children[0]
-		pullspec, _ := imagebuilder.ProcessWord(fromNode.Next.Value, env)
+		pullspec, err := imagebuilder.ProcessWord(fromNode.Next.Value, env)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrParse, err)
+		}
 		res = append(res, pullspec)
 	}
 
-	return res
+	return res, nil
 }
 
 // parseStageRefs parses the AST for the passed imagebuilder.Stage and
@@ -234,7 +240,11 @@ func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount,
 			}
 
 		case "run":
-			mounts = append(mounts, parseMounts(child, env, stageNames)...)
+			runMounts, err := parseMounts(child, env, stageNames)
+			if err != nil {
+				return copies, mounts, err
+			}
+			mounts = append(mounts, runMounts...)
 		}
 	}
 
@@ -256,7 +266,7 @@ func isStageRef(ref string, stageNames []string) bool {
 // parseMounts extracts Mount references from a RUN instruction's --mount flags.
 // Only mounts with a "from" option are returned. Uses the passed previous stage
 // names to classify whether the mount references a builder stage or an external image.
-func parseMounts(node *parser.Node, env []string, stageNames []string) []Mount {
+func parseMounts(node *parser.Node, env []string, stageNames []string) ([]Mount, error) {
 	var mounts []Mount
 	for _, fl := range node.Flags {
 		if !strings.HasPrefix(fl, "--mount=") {
@@ -267,7 +277,11 @@ func parseMounts(node *parser.Node, env []string, stageNames []string) []Mount {
 		from := ""
 		for opt := range strings.SplitSeq(mountOpts, ",") {
 			if val, ok := strings.CutPrefix(opt, "from="); ok {
-				from, _ = imagebuilder.ProcessWord(val, env)
+				var err error
+				from, err = imagebuilder.ProcessWord(val, env)
+				if err != nil {
+					return nil, fmt.Errorf("%w: %w", ErrParse, err)
+				}
 				break
 			}
 		}
@@ -286,7 +300,7 @@ func parseMounts(node *parser.Node, env []string, stageNames []string) []Mount {
 			Type: mountType,
 		})
 	}
-	return mounts
+	return mounts, nil
 }
 
 // parseCopy takes a raw dockerfile parser Node and optionally returns a pointer
@@ -306,7 +320,10 @@ func parseCopy(node *parser.Node, workdir string, env []string, stageNames []str
 		if !strings.HasPrefix(fl, "--from=") {
 			continue
 		}
-		from, _ := imagebuilder.ProcessWord(strings.TrimPrefix(fl, "--from="), env)
+		from, err := imagebuilder.ProcessWord(strings.TrimPrefix(fl, "--from="), env)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrParse, err)
+		}
 
 		// aggregate the COPY arguments by iterating the nodes
 		args := make([]string, 0)
