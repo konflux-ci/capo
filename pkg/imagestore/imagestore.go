@@ -1,6 +1,6 @@
-// Package repository provides access to container image storage for resolving
+// Package imagestore provides access to container image storage for resolving
 // image pullspecs to their digests.
-package repository
+package imagestore
 
 import (
 	"errors"
@@ -10,14 +10,14 @@ import (
 	"go.podman.io/storage/pkg/reexec"
 )
 
-// Repository abstracts container image storage operations, primarily the
+// ImageStore abstracts container image storage operations, primarily the
 // resolution of image pullspecs to their content digests.
-type Repository interface {
+type ImageStore interface {
 	ResolveDigest(string) (string, error)
 }
 
-// BuildahRepository is a Repository backed by a local buildah/containers storage.
-type BuildahRepository struct {
+// BuildahStore is an ImageStore backed by a local buildah/containers storage.
+type BuildahStore struct {
 	store storage.Store
 }
 
@@ -29,33 +29,33 @@ var ErrPullspecResolve = errors.New("failed to resolve pullspec")
 // initialized.
 var ErrBuildahStorageSetup = errors.New("error while setting up buildah storage")
 
-// NewBuildahRepository creates a BuildahRepository using the default
+// NewBuildahStore creates a BuildahStore using the default
 // containers/storage location.
-func NewBuildahRepository() (Repository, error) {
+func NewBuildahStore() (ImageStore, error) {
 	// The containers/storage library requires this to run for some operations
 	if reexec.Init() {
-		return &BuildahRepository{}, fmt.Errorf("%w: failed to init reexec", ErrBuildahStorageSetup)
+		return &BuildahStore{}, fmt.Errorf("%w: failed to init reexec", ErrBuildahStorageSetup)
 	}
 
 	opts, err := storage.DefaultStoreOptions()
 	if err != nil {
-		return &BuildahRepository{},
+		return &BuildahStore{},
 			fmt.Errorf("%w: failed to create default storage options: %w", ErrBuildahStorageSetup, err)
 	}
 
 	store, err := storage.GetStore(opts)
 	if err != nil {
-		return &BuildahRepository{}, fmt.Errorf("%w: failed to create storage: %w", ErrBuildahStorageSetup, err)
+		return &BuildahStore{}, fmt.Errorf("%w: failed to create storage: %w", ErrBuildahStorageSetup, err)
 	}
 
-	return &BuildahRepository{
+	return &BuildahStore{
 		store: store,
 	}, nil
 }
 
 // ResolveDigest looks up the given pullspec in the local storage and returns
 // its content digest in the form "sha256:<hex>".
-func (repo *BuildahRepository) ResolveDigest(pullspec string) (string, error) {
+func (repo *BuildahStore) ResolveDigest(pullspec string) (string, error) {
 	id, err := repo.store.Lookup(pullspec)
 	if err != nil {
 		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
