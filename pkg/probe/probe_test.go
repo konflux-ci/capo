@@ -9,12 +9,12 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-type TestRepository struct {
+type TestStore struct {
 	digests map[string]string
 }
 
-func (repo TestRepository) ResolveDigest(pullspec string) (string, error) {
-	return repo.digests[pullspec], nil
+func (store TestStore) ResolveDigest(pullspec string) (string, error) {
+	return store.digests[pullspec], nil
 }
 
 func TestProbe(t *testing.T) {
@@ -369,7 +369,7 @@ func TestProbe(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			repo := TestRepository{
+			repo := TestStore{
 				digests: test.digests,
 			}
 

@@ -9,8 +9,8 @@ import (
 	"runtime/debug"
 
 	"github.com/konflux-ci/capo/pkg/buildargs"
+	"github.com/konflux-ci/capo/pkg/imagestore"
 	"github.com/konflux-ci/capo/pkg/probe"
-	"github.com/konflux-ci/capo/pkg/repository"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -135,9 +135,9 @@ func main() {
 		}
 	}()
 
-	repo, err := repository.NewBuildahRepository()
+	repo, err := imagestore.NewBuildahStore()
 	if err != nil {
-		log.Fatalf("Could not create buildah repository: %s", err)
+		log.Fatalf("Could not create buildah image store: %s", err)
 	}
 
 	meta, err := probe.Probe(probe.ProbeOpts{

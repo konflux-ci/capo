@@ -1,6 +1,6 @@
 // Package probe extracts build metadata from a Containerfile without
 // performing a build. It parses the Containerfile, identifies base and extra
-// images, and optionally resolves their digests via a Repository.
+// images, and optionally resolves their digests via an ImageStore.
 package probe
 
 import (
@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/konflux-ci/capo/pkg/containerfile"
-	"github.com/konflux-ci/capo/pkg/repository"
+	"github.com/konflux-ci/capo/pkg/imagestore"
 )
 
 // Image represents a container image identified by its pullspec and,
@@ -50,14 +50,14 @@ var ErrParseContainerfile = errors.New("could not parse containerfile")
 var ErrDigestResolve = errors.New("failed to resolve digest of image")
 
 // Probe parses the Containerfile described in opts and collects build metadata.
-// When repo is non-nil, image digests are resolved through the repository.
-func Probe(opts ProbeOpts, repo repository.Repository) (BuildMetadata, error) {
+// When repo is non-nil, image digests are resolved through the image store.
+func Probe(opts ProbeOpts, store imagestore.ImageStore) (BuildMetadata, error) {
 	meta := BuildMetadata{}
 
 	meta.Image.Pullspec = opts.Tag
 
-	if repo != nil {
-		digest, err := repo.ResolveDigest(opts.Tag)
+	if store != nil {
+		digest, err := store.ResolveDigest(opts.Tag)
 		if err != nil {
 			return meta, fmt.Errorf("%w %q: %w", ErrDigestResolve, opts.Tag, err)
 		}
@@ -78,14 +78,14 @@ func Probe(opts ProbeOpts, repo repository.Repository) (BuildMetadata, error) {
 
 	reachable := reachableStages(stages)
 
-	baseImages, err := resolveBaseImages(repo, reachable)
+	baseImages, err := resolveBaseImages(store, reachable)
 	if err != nil {
 		return meta, err
 	}
 
 	meta.BaseImages = baseImages
 
-	extraImages, err := resolveExtraImages(repo, reachable)
+	extraImages, err := resolveExtraImages(store, reachable)
 	if err != nil {
 		return meta, err
 	}
@@ -173,7 +173,7 @@ func stageRefs(stage containerfile.Stage) []string {
 	return refs
 }
 
-func resolveBaseImages(repo repository.Repository, stages []containerfile.Stage) ([]Image, error) {
+func resolveBaseImages(store imagestore.ImageStore, stages []containerfile.Stage) ([]Image, error) {
 	res := make([]Image, 0)
 	seen := make(map[string]bool)
 
@@ -190,8 +190,8 @@ func resolveBaseImages(repo repository.Repository, stages []containerfile.Stage)
 		digest := ""
 		var err error
 
-		if repo != nil {
-			digest, err = repo.ResolveDigest(stage.Base)
+		if store != nil {
+			digest, err = store.ResolveDigest(stage.Base)
 			if err != nil {
 				return nil, fmt.Errorf("%w %q: %w", ErrDigestResolve, stage.Base, err)
 			}
@@ -205,7 +205,7 @@ func resolveBaseImages(repo repository.Repository, stages []containerfile.Stage)
 	return res, nil
 }
 
-func resolveExtraImages(repo repository.Repository, stages []containerfile.Stage) ([]Image, error) {
+func resolveExtraImages(store imagestore.ImageStore, stages []containerfile.Stage) ([]Image, error) {
 	res := make([]Image, 0)
 	seen := make(map[string]bool)
 
@@ -218,8 +218,8 @@ func resolveExtraImages(repo repository.Repository, stages []containerfile.Stage
 		digest := ""
 		var err error
 
-		if repo != nil {
-			digest, err = repo.ResolveDigest(pullspec)
+		if store != nil {
+			digest, err = store.ResolveDigest(pullspec)
 			if err != nil {
 				return fmt.Errorf("%w %q: %w", ErrDigestResolve, pullspec, err)
 			}
