@@ -17,7 +17,9 @@ import (
 // Image represents a container image identified by its pullspec and,
 // when resolved, its content digest.
 type Image struct {
+	// Pullspec of the image as found in the Containerfile
 	Pullspec string
+	// Digest in the form sha256:<digest>
 	Digest   string
 }
 
@@ -33,7 +35,6 @@ type BuildMetadata struct {
 // ProbeOpts configures a Probe invocation.
 type ProbeOpts struct {
 	// Tag of the built image
-	// If empty, the built image won't be resolved.
 	Tag string
 	// Reader of the containerfile
 	Containerfile io.Reader
