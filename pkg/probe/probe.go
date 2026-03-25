@@ -20,7 +20,7 @@ type Image struct {
 	// Pullspec of the image as found in the Containerfile
 	Pullspec string
 	// Digest in the form sha256:<digest>
-	Digest   string
+	Digest string
 }
 
 // BuildMetadata holds the images involved in a container build: the built
