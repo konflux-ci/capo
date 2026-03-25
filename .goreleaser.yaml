@@ -24,9 +24,9 @@ builds:
       post:
         - upx -9 "{{ .Path }}"
 
-  - id: sbomprobe
-    binary: sbomprobe
-    dir: ./cmd/sbomprobe
+  - id: buildprobe
+    binary: buildprobe
+    dir: ./cmd/buildprobe
     ldflags:
       - -s -w -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser -X main.Version={{.Version}} -X main.Revision={{.ShortCommit}}
     env:
