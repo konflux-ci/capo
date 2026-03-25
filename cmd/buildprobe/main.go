@@ -51,7 +51,7 @@ func parseArgs() (args, error) {
 	tag := flag.String(
 		"tag",
 		"",
-		"Tag of the built image.",
+		"Tag of the built image. Required.",
 	)
 
 	cfPath := flag.String(
