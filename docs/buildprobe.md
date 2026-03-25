@@ -1,7 +1,7 @@
 # Usage
 
-buildprobe extracts build metadata from a Containerfile without performing an
-actual build. It parses the Containerfile, resolves image digests via the local
+buildprobe extracts build metadata from a Containerfile and its associated
+build. It parses the Containerfile, resolves image digests via the local
 buildah store, and prints the result as YAML to stdout.
 
 Because buildprobe accesses the buildah image store, it must run under
