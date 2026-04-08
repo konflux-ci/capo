@@ -8,6 +8,8 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
 
     steps:
     - name: Checkout code
@@ -25,5 +27,13 @@ jobs:
     - name: Download dependencies
       run: mage tidy
 
-    - name: Run tests
-      run: mage test
+    - name: Run tests with coverage
+      run: mage coverage
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        use_oidc: true
+        flags: unit-tests
+        files: coverage.out
+        fail_ci_if_error: false
