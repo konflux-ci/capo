@@ -47,9 +47,14 @@ func Build() error {
 	return sh.RunV("go", "install", "./...")
 }
 
-// Runs unit tests using Ginkgo.
+// Runs unit tests.
 func Test() error {
 	return sh.RunV("go", "test", "-tags=unit,exclude_graphdriver_btrfs", "./...")
+}
+
+// Runs unit tests with coverage profiling and writes the result to coverage.out.
+func Coverage() error {
+	return sh.RunV("go", "test", "-coverprofile=coverage.out", "-covermode=atomic", "-tags=unit,exclude_graphdriver_btrfs", "./...")
 }
 
 // Runs the dlv debugger in a buildah namespace using 'buildah unshare'.
