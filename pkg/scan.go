@@ -141,12 +141,14 @@ func resolvePullspecs(store storage.Store, stages []containerfile.Stage) (map[st
 				continue
 			}
 
-			resolved, err := resolvePullspec(store, cp.From)
-			if err != nil {
-				return nil, err
-			}
+			if _, ok := res[cp.From]; !ok {
+				resolved, err := resolvePullspec(store, cp.From)
+				if err != nil {
+					return nil, err
+				}
 
-			res[cp.From] = resolved
+				res[cp.From] = resolved
+			}
 		}
 	}
 

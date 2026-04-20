@@ -24,19 +24,12 @@ var ErrImageMount = errors.New("could not mount image")
 var ErrIO = errors.New("IO operation failed")
 var ErrStorage = errors.New("storage operation failed")
 
-// Uses the container store to returns a struct containing absolute paths to
-// partial content for the specified pullspec.
+// getContent uses the container store to extract partial content from the build
+// for the specified package source. Extracts both builder base content and
+// intermediate content (created during the build) for later syft scanning.
 //
-// Uses the includer to filter content that should be included.
-//
-// Stores content to path/intermediate/ and path/builder/ directorties
-// for intermediate and builder content respectively.
-//
-// WARNING: currently there is a limitation on the intermediate content that can be retrieved.
-// If the store after a 'buildah build' contains multiple intermediate layers in different buildah stages
-// that use a builder image with the same pullspec, only one intermediate layer can be retrieved.
-// This is because it is currently impossible to differentiate between the two layers, a contribution
-// to buildah will be most likely required (such as storing the ids of the last layers/images in a stage).
+// Uses buildah stage labels (io.buildah.stage.name) to identify intermediate
+// image for each stage.
 func getContent(
 	store storage.Store,
 	pkgSource packageSource,
@@ -49,7 +42,7 @@ func getContent(
 	}
 	img, _ := store.Image(imgId)
 
-	intermediate, err := getIntermediateContent(store, img, pkgSource.sources, intermediateContentPath)
+	intermediate, err := getIntermediateContent(store, img, pkgSource.alias, pkgSource.sources, intermediateContentPath)
 	if err != nil {
 		return err
 	}
@@ -169,21 +162,13 @@ func copyFile(src string, dest string) (err error) {
 }
 
 // Stores intermediate content for the specified image to the path directory.
-// Calculates a diff between the last intermediate layer in a stage and its
-// respective builder base image, then uses the includer to filter content of interest.
-//
-// Tries to find last intermediate layer by looking for all intermediate images,
-// and filtering the ones whose layer parent ids eventually reach the builder
-// image. Out of these, the last intermediate layer is the one with the longest
-// chain to the builder image.
-//
-// WARNING: This approach is not totally correct, specifically it cannot handle
-// builds where multiple builder stages use the same builder base pullspec.
-// In this case only one such intermediate layer can be found.
-// A contribution to buildah might be required, see [content.GetContent] documentation.
+// Uses buildah stage labels (io.buildah.stage.name) to find the intermediate
+// image for the given stage, then calculates a diff between the intermediate
+// top layer and the builder base image top layer.
 func getIntermediateContent(
 	store storage.Store,
 	builderImage *storage.Image,
+	stageAlias string,
 	sources []string,
 	path string,
 ) ([]string, error) {
@@ -192,12 +177,19 @@ func getIntermediateContent(
 		return []string{}, fmt.Errorf("%w: failed to get builder layer: %w", ErrStorage, err)
 	}
 
-	interLayer, err := getLastIntermediateLayer(store, builderLayer)
+	// Find intermediate image using buildah stage labels
+	intermediateImage, found, err := findIntermediateImage(store, stageAlias)
 	if err != nil {
-		return []string{}, err
+		return []string{}, fmt.Errorf("%w: failed to find intermediate image: %w", ErrStorage, err)
 	}
-	if interLayer == nil {
+	if !found {
+		// No intermediate image for this stage
 		return []string{}, nil
+	}
+
+	interLayer, err := store.Layer(intermediateImage.TopLayer)
+	if err != nil {
+		return []string{}, fmt.Errorf("%w: failed to get intermediate layer: %w", ErrStorage, err)
 	}
 
 	included, err := saveDiff(store, path, interLayer.ID, builderLayer.ID, sources)
@@ -206,87 +198,6 @@ func getIntermediateContent(
 	}
 
 	return included, nil
-}
-
-func getIntermediateLayers(store storage.Store, builderLayer *storage.Layer) ([]*storage.Layer, error) {
-	images, err := store.Images()
-	if err != nil {
-		return nil, fmt.Errorf("%w: failed to list images: %w", ErrStorage, err)
-	}
-
-	var candidates []*storage.Layer
-
-	for _, img := range images {
-		// The image for the last intermediate layer never has a name
-		if len(img.Names) != 0 {
-			continue
-		}
-
-		// This is an image for the builder layer itself so it
-		// cannot be an intermediate layer.
-		if img.TopLayer == builderLayer.ID {
-			continue
-		}
-
-		imgTopLayer, err := store.Layer(img.TopLayer)
-		if err != nil {
-			return nil, fmt.Errorf("%w: failed to get image top layer: %w", ErrStorage, err)
-		}
-
-		layerId := img.TopLayer
-		for layerId != "" {
-			if layerId == builderLayer.ID {
-				candidates = append(candidates, imgTopLayer)
-				break
-			}
-
-			layer, err := store.Layer(layerId)
-			if err != nil {
-				return nil, fmt.Errorf("%w: failed to get layer: %w", ErrStorage, err)
-			}
-
-			layerId = layer.Parent
-		}
-	}
-
-	return candidates, nil
-}
-
-func getLastIntermediateLayer(store storage.Store, builderLayer *storage.Layer) (*storage.Layer, error) {
-	candidates, err := getIntermediateLayers(store, builderLayer)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(candidates) == 0 {
-		return nil, nil
-	}
-
-	// Find the candidate with the longest layer chain (furthest from builder)
-	var longestChain *storage.Layer
-	maxDepth := 0
-
-	for _, candidate := range candidates {
-		depth := 0
-		layerId := candidate.ID
-
-		for layerId != "" && layerId != builderLayer.ID {
-			layer, err := store.Layer(layerId)
-			if err != nil {
-				return nil, fmt.Errorf("%w: failed to get layer in chain: %w", ErrStorage, err)
-			}
-
-			depth++
-			layerId = layer.Parent
-		}
-
-		if depth > maxDepth {
-			maxDepth = depth
-			longestChain = candidate
-		}
-	}
-
-	return longestChain, nil
 }
 
 func saveDiff(
