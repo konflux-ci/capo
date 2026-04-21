@@ -32,3 +32,6 @@ go.work.sum
 .vscode/
 
 capo
+
+# Custom buildah binary for integration tests
+testdata/bin/buildah

@@ -78,7 +78,19 @@ func Lint() error {
 	return sh.RunV("golangci-lint", "run")
 }
 
+// Builds custom buildah from specific commit for integration tests.
+// The binary is placed in testdata/bin/buildah and does NOT affect system buildah.
+func BuildCustomBuildah() error {
+	return sh.RunV("bash", "./testdata/build_buildah.sh")
+}
+
 // Builds all test images and runs the integration test.
+// By default uses system buildah. To use custom buildah with unreleased features:
+//
+//	mage BuildCustomBuildah
+//	mage IntegrationTest
+//
+// The integration test automatically detects and uses testdata/bin/buildah if present.
 func IntegrationTest() error {
 	return sh.RunV(
 		"buildah",
@@ -86,6 +98,7 @@ func IntegrationTest() error {
 		"go",
 		"test",
 		"-v",
+		"-count=1", // disable test caching
 		"-tags=integration,exclude_graphdriver_btrfs",
 		"./pkg",
 	)

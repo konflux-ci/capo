@@ -1,88 +1,97 @@
-# Integration tests
+# Integration Tests
 
-The integration tests can be run using the following command:
+## Prerequisites
+
+Capo requires buildah with `--save-stages --stage-labels` support for correct
+intermediate image identification. This feature will be available in buildah
+>= 1.44.0. Until then, a custom buildah binary must be built from source.
+
+### Building Custom Buildah
+
+```bash
+mage buildCustomBuildah
+```
+
+This downloads buildah from a specific commit, builds the binary and places it
+in `testdata/bin/buildah`. It does **not** modify your system buildah.
+
+If your system buildah already supports `--save-stages`, the script will detect
+this and skip the build.
+
+## Running Tests
 
 ```bash
 mage integrationTest
 ```
 
-The integration test framework allows to create custom test images
-as well as builder images.
+The test runner automatically uses `testdata/bin/buildah` if present, otherwise
+falls back to system buildah. The buildah binary path and version are logged at
+the start of each test run.
 
-Builder images are built before the test image, its tag can (and should)
-be referenced within the Containerfile of the test image.
+## Writing Tests
 
-All the details about each image and its builder images shall be specified
-within the `TestCase` struct. The details of this structure will be explained
-below.
+The integration test framework allows creating custom test images as well as
+builder images. All details about each image are specified within the `TestCase`
+struct in `pkg/integration_test.go`.
 
-## `TestImage`
+### `TestCase` Fields
 
-This field contains the necessary information about the build of the test image.
-The used type is `BuildDefinition`, refer to this type for details.
+| Field | Type | Description |
+|---|---|---|
+| `Description` | `string` | Short test name, used in logs and summary |
+| `LongDescription` | `string` | Additional notes, describing the testing intention more closely, logged before the test runs |
+| `SkipTestReason` | `string` | If non-empty, test is skipped with this reason (for missing functionalities o unresolved bugs) |
+| `SkipBuild` | `bool` | Skip image building (for testing Scan errors) |
+| `ExpectedError` | `string` | If set, test expects an error containing this substring |
+| `TestImage` | `BuildDefinition` | The multi-stage image to scan |
+| `BuilderImages` | `[]BuildDefinition` | Pre-built builder base images for the test |
+| `ExpectedResult` | `PackageMetadata` | Expected scan output for comparison |
 
-## `BuilderImages`
+### `BuildDefinition` Fields
 
-This field contains a slice of `BuildDefinition` structs. These images are built
-before the test image and can be referenced in its Containerfile.
+| Field | Type | Description |
+|---|---|---|
+| `Tag` | `string` | Image tag (e.g. `localhost/foo:latest`). Auto-normalized if registry or tag is missing. Random UUID if empty. |
+| `ContainerfileContent` | `string` | Inline containerfile content. Providing a file path will not work. |
+| `ContextDirectory` | `string` | Path to build context, relative to `pkg/` (e.g. `../testdata/image_content`). |
 
-## `ExpectedResult`
+Builder images are built before the test image. Their tags can be referenced
+in the test image's containerfile via `FROM` or `COPY --from`.
 
-This field contains the expected result of the scan of the test image. The
-type of this field is `PackageMetadata`, which is the standard output format
-for Capo.
+The test image is built with `--save-stages --stage-labels` flags to enable
+intermediate image labeling for capo scanning.
 
+### Tags
 
-## `BuildDefinition` type
+Make sure each image within a test case has a unique tag. The containerfile
+must contain the full pullspec including registry and tag (e.g.
+`localhost/builder:latest`), since buildah does not auto-normalize these.
 
-This struct contains the following fields:
+### Test Summary
 
-- `Tag`
-- `ContainerfileContent`
-- `ContextDirectory`
-
-### `Tag`
-
-Specifies how should the built image be tagged. Useful for referencing the
-builder images as well as for cleanup. Make sure to create a different tag for
-each image within a test case. (No 2 builder images should share the same
-tag, neither should any builder image share the same tag with the test image.)
-
-Example value: `localhost/foo:latest`. If you don't include
-the registry URL (in this case `localhost`) or a tag (`:latest`), these
-default values will be provided automatically.
-
-If omitted, a random tag will be created with the use of UUID. Keep in mind
-that an image with an UUID tag cannot easily be referenced in another
-Containerfile, so you must specify a tag for each base image.
-
-Keep in mind that the Containerfile must contain the full pullspec, you
-cannot omit the registry or tag there!
-
-### `ContainerfileContent`
-
-A string, holding the contents of the Containerfile specifying this image.
-Providing a path to a Containerfile **will not work**.
-
-### `ContextDirectory`
-
-This is the **path** to a context directory used for the build of this image.
-Keep in mind that the working directory for the integration tests is
-`capo/pkg`.
-
-To use the directory `capo/testdata/image_content`, you have to format it like
-so: `../testdata/image_content`.
-
-This directory is the default context directory for building
-the test images and builder images. This means that if you
-specify this line in your testing dockerfile:
-
-```dockerfile
-COPY ./README.md /
-```
-
-Then you also have to provide the `README.md` file in the context directory.
+After all tests run, a summary is printed with pass/skip/fail counts and
+individual test results.
 
 ## Cleanup
 
-The test images are cleaned up automatically after each run.
+Test images and intermediate images are cleaned up automatically after each
+test case.
+
+## File Structure
+
+```
+testdata/
+├── bin/
+│   └── buildah          # Custom buildah binary (gitignored)
+├── build_buildah.sh     # Build script for custom buildah
+└── image_content/       # Test content (go.mod files for syft scanning)
+```
+
+## Troubleshooting
+
+### Clean rebuild of custom buildah
+
+```bash
+rm -f testdata/bin/buildah
+mage buildCustomBuildah
+```
