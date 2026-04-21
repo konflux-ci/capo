@@ -325,8 +325,13 @@ func scanSource(
 		log.Printf("[DEBUG] Intermediate %s content path: %s", pkgSource.pullspec, intermediateContentPath)
 	} else {
 		defer func() {
-			err = os.RemoveAll(builderContentPath)
-			err = os.RemoveAll(intermediateContentPath)
+			removeErr := errors.Join(
+				os.RemoveAll(builderContentPath),
+				os.RemoveAll(intermediateContentPath),
+			)
+			if err == nil {
+				err = removeErr
+			}
 		}()
 	}
 
