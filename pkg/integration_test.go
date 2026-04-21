@@ -4,15 +4,18 @@ package capo
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/uuid"
 	"github.com/konflux-ci/capo/pkg/containerfile"
 	"github.com/magefile/mage/sh"
 	"go.podman.io/storage"
-	"os"
-	"strings"
-	"testing"
 )
 
 type BuildDefinition struct {
@@ -22,36 +25,98 @@ type BuildDefinition struct {
 }
 
 type TestCase struct {
-	TestImage      BuildDefinition
-	BuilderImages  []BuildDefinition
-	ExpectedResult PackageMetadata
+	Description     string
+	LongDescription string
+	SkipTestReason      string
+	TestImage       BuildDefinition
+	BuilderImages   []BuildDefinition
+	ExpectedResult  PackageMetadata
+	// SkipBuild skips image building for testing Scan() errors
+	// when the referenced images are not expected to exist in storage.
+	SkipBuild bool
+	ExpectedError string
 }
 
-func (testCase *TestCase) build(store storage.Store) error {
+// getBuildahBinary returns the path to buildah binary to use for tests.
+// Uses testdata/bin/buildah if it exists, otherwise falls back to system buildah.
+func getBuildahBinary(t *testing.T) string {
+	var binary string
+	testdataBuildah := filepath.Join("..", "testdata", "bin", "buildah")
+	if _, err := os.Stat(testdataBuildah); err == nil {
+		binary, _ = filepath.Abs(testdataBuildah)
+		t.Logf("Using custom buildah: %s", binary)
+	} else {
+		binary = "buildah"
+		t.Logf("Using system buildah")
+	}
+
+	version, err := sh.Output(binary, "--version")
+	if err != nil {
+		t.Logf("WARNING: could not determine buildah version: %v", err)
+	} else {
+		t.Logf("Buildah version: %s", version)
+	}
+
+	return binary
+}
+
+func (testCase *TestCase) checkExpectedError(t *testing.T, err error) error {
+	if testCase.ExpectedError == "" {
+		return err
+	}
+	if !strings.Contains(err.Error(), testCase.ExpectedError) {
+		t.Errorf("[FAIL] expected error containing %q but got: %v", testCase.ExpectedError, err)
+		return fmt.Errorf("wrong error: %w", err)
+	}
+	t.Logf("[PASS] Got expected error: %v", err)
+	return nil
+}
+
+func (testCase *TestCase) build(store storage.Store, buildahBinary string) error {
 	for _, builderImage := range testCase.BuilderImages {
-		if err := builderImage.buildImage(store, true); err != nil {
+		if err := builderImage.buildImage(store, buildahBinary, true); err != nil {
 			return err
 		}
 	}
-	if err := testCase.TestImage.buildImage(store, false); err != nil {
+	if err := testCase.TestImage.buildImage(store, buildahBinary, false); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (testCase *TestCase) run(t *testing.T, store storage.Store) error {
-	if err := testCase.build(store); err != nil {
-		return err
+func (testCase *TestCase) run(t *testing.T, store storage.Store, buildahBinary string) error {
+	if testCase.Description != "" {
+		t.Logf("=== Running test: %s ===", testCase.Description)
 	}
-	defer testCase.cleanUp(t, store)
+	if testCase.LongDescription != "" {
+		t.Logf("Notes:\n%s", testCase.LongDescription)
+	}
+	if testCase.SkipTestReason != "" {
+		t.Logf("Test skipped: %s", testCase.SkipTestReason)
+		return nil
+	}
+	if !testCase.SkipBuild {
+		defer testCase.cleanUp(t, store)
+		if err := testCase.build(store, buildahBinary); err != nil {
+			return testCase.checkExpectedError(t, err)
+		}
+	}
+
 	stages, err := containerfile.Parse(strings.NewReader(testCase.TestImage.ContainerfileContent), containerfile.BuildOptions{})
 	if err != nil {
-		return err
+		return testCase.checkExpectedError(t, err)
 	}
+
 	result, err := Scan(stages)
 	if err != nil {
-		return err
+		return testCase.checkExpectedError(t, err)
 	}
+
+	if testCase.ExpectedError != "" {
+		t.Errorf("expected error containing %q but all steps succeeded", testCase.ExpectedError)
+		return errors.New("expected error but got none")
+	}
+
 	// Compare packages order-independently using go-cmp:
 	// - SortSlices: ensures comparison is order-independent by sorting on PackageURL
 	// - EquateEmpty: treats nil and empty slices as equal
@@ -75,8 +140,9 @@ func (testCase *TestCase) run(t *testing.T, store storage.Store) error {
 
 // buildImage builds a container image from a containerfile using buildah.
 // Skips building if the image already exists and isBuilder is true.
-func (buildDef *BuildDefinition) buildImage(store storage.Store, isBuilder bool) (err error) {
+func (buildDef *BuildDefinition) buildImage(store storage.Store, buildahBinary string, isBuilder bool) (err error) {
 	tag := buildDef.Tag
+
 	if _, err := store.Lookup(tag); err == nil && isBuilder {
 		return nil
 	}
@@ -87,9 +153,12 @@ func (buildDef *BuildDefinition) buildImage(store storage.Store, isBuilder bool)
 		return err
 	}
 	defer func() {
-		err = tmpFile.Close()
+		closeErr := errors.Join(
+			tmpFile.Close(),
+			os.Remove(tmpFile.Name()),
+		)
 		if err == nil {
-			err = os.Remove(tmpFile.Name())
+			err = closeErr
 		}
 	}()
 
@@ -98,7 +167,6 @@ func (buildDef *BuildDefinition) buildImage(store storage.Store, isBuilder bool)
 		return err
 	}
 
-	// Build using buildah binary: buildah build --layers -f Containerfile --tag tag contextDir
 	args := []string{
 		"build",
 		"-f",
@@ -107,11 +175,11 @@ func (buildDef *BuildDefinition) buildImage(store storage.Store, isBuilder bool)
 		tag,
 	}
 	if !isBuilder {
-		args = append(args, "--layers")
+		args = append(args, "--save-stages", "--stage-labels")
 	}
 	args = append(args, buildDef.ContextDirectory)
 
-	return sh.RunV("buildah", args...)
+	return sh.RunV(buildahBinary, args...)
 }
 
 func normalizePullspec(pullspec string) string {
@@ -203,6 +271,7 @@ func TestIntegration(t *testing.T) {
 
 	testCases := []TestCase{
 		{
+			Description: "Simple COPY from builder",
 			TestImage: BuildDefinition{
 				ContainerfileContent: `FROM localhost/capo-builder/go_builder:latest as builder
 									   FROM scratch
@@ -230,6 +299,16 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
+		{
+			Description: "Non-existent builder base - Scan fails on pullspec resolve",
+			SkipBuild:   true,
+			TestImage: BuildDefinition{
+				ContainerfileContent: `FROM nonexistent:latest as builder
+									   FROM scratch
+									   COPY --from=builder /file /file`,
+			},
+			ExpectedError: "failed to resolve pullspec",
+		},
 	}
 	// Normalize all tags in test cases
 	for i := range testCases {
@@ -240,10 +319,34 @@ func TestIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to setup store: %+v", err)
 	}
+
+	buildahBinary := getBuildahBinary(t)
+
+	var passed, skipped, failed []string
 	for _, testCase := range testCases {
-		err := testCase.run(t, store)
-		if err != nil {
-			t.Errorf("Test case %s failed: %+v", testCase.TestImage.Tag, err)
+		if testCase.SkipTestReason != "" {
+			skipped = append(skipped, testCase.Description)
+			t.Logf("=== Test case %s skipped. ===", testCase.Description)
+			continue
 		}
+		err := testCase.run(t, store, buildahBinary)
+		if err != nil {
+			failed = append(failed, testCase.Description)
+			t.Errorf("=== Test case %s failed: %+v ===", testCase.Description, err)
+		} else {
+			passed = append(passed, testCase.Description)
+			t.Logf("=== Test case %s passed. ===", testCase.Description)
+		}
+	}
+
+	t.Logf("\n=== SUMMARY: %d passed, %d skipped, %d failed ===", len(passed), len(skipped), len(failed))
+	for _, name := range passed {
+		t.Logf("  PASS: %s", name)
+	}
+	for _, name := range skipped {
+		t.Logf("  SKIP: %s", name)
+	}
+	for _, name := range failed {
+		t.Logf("  FAIL: %s", name)
 	}
 }
