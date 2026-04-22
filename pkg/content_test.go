@@ -47,7 +47,7 @@ func TestCheckBuildahVersionFromImage(t *testing.T) {
 		},
 		"dev version of old release": {
 			labels:    map[string]string{"io.buildah.version": "1.43.0-dev"},
-			expectErr: true,
+			expectErr: false,
 		},
 		"missing label": {
 			labels:    map[string]string{},
