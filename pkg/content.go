@@ -378,11 +378,12 @@ func checkBuildahVersionFromImage(labels map[string]string) error {
 		return fmt.Errorf("%w: could not parse buildah version %q: %w", ErrUnsupportedBuildahVersion, buildahVersionStr, err)
 	}
 
+	if buildahVersion.Prerelease() != "" {
+		return nil
+	}
+
 	minVersion, _ := semver.NewVersion(MinBuildahVersion)
-	coreVersion, _ := semver.NewVersion(
-		fmt.Sprintf("%d.%d.%d", buildahVersion.Major(), buildahVersion.Minor(), buildahVersion.Patch()),
-	)
-	if coreVersion.LessThan(minVersion) {
+	if buildahVersion.LessThan(minVersion) {
 		return fmt.Errorf(
 			"%w: image was built with buildah %s, requires >= %s",
 			ErrUnsupportedBuildahVersion, buildahVersionStr, MinBuildahVersion,
