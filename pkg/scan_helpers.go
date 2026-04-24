@@ -25,10 +25,9 @@ type imageConfig struct {
 
 // getImageLabels retrieves labels from an image's config.
 func getImageLabels(store storage.Store, img *storage.Image) (map[string]string, error) {
-	// Find config blob name (first BigDataName starting with "sha256:" that's not "manifest-sha256:")
 	var configBlobName string
 	for _, name := range img.BigDataNames {
-		if strings.HasPrefix(name, "sha256:") && !strings.HasPrefix(name, "manifest-sha256:") {
+		if strings.HasPrefix(name, "sha256:") {
 			configBlobName = name
 			break
 		}
@@ -78,7 +77,7 @@ func findIntermediateImage(store storage.Store, stageAlias string) (*storage.Ima
 		// Check if the intermediate image was built with a supported buildah version.
 		// Intermediate images built with old buildah versions will not contain
 		// io.buildah.stage.name and io.buildah.stage.base labels.
-		if err := checkBuildahImageVersion(labels); err != nil {
+		if err := checkBuildahVersionFromImage(labels); err != nil {
 			errs = append(errs, fmt.Errorf(
 				"intermediate image %s: %w, "+
 					"ensure buildah >= %s is used for the build and consider using "+
@@ -120,27 +119,27 @@ func findIntermediateImage(store storage.Store, stageAlias string) (*storage.Ima
 	return nil, false, nil
 }
 
-// checkBuildahImageVersion checks if the image was built with a supported buildah version.
+// checkBuildahVersionFromImage checks if the image was built with a supported buildah version.
 // Fails if io.buildah.version label is missing or below MinBuildahVersion.
-func checkBuildahImageVersion(labels map[string]string) error {
-	versionStr, ok := labels["io.buildah.version"]
+func checkBuildahVersionFromImage(labels map[string]string) error {
+	buildahVersionStr, ok := labels["io.buildah.version"]
 	if !ok {
 		return fmt.Errorf("%w: io.buildah.version label not found in image config", ErrUnsupportedBuildahVersion)
 	}
 
-	imgVersion, err := semver.NewVersion(versionStr)
+	buildahVersion, err := semver.NewVersion(buildahVersionStr)
 	if err != nil {
-		return fmt.Errorf("%w: could not parse buildah version %q: %w", ErrUnsupportedBuildahVersion, versionStr, err)
+		return fmt.Errorf("%w: could not parse buildah version %q: %w", ErrUnsupportedBuildahVersion, buildahVersionStr, err)
 	}
 
 	minVersion, _ := semver.NewVersion(MinBuildahVersion)
 	coreVersion, _ := semver.NewVersion(
-		fmt.Sprintf("%d.%d.%d", imgVersion.Major(), imgVersion.Minor(), imgVersion.Patch()),
+		fmt.Sprintf("%d.%d.%d", buildahVersion.Major(), buildahVersion.Minor(), buildahVersion.Patch()),
 	)
 	if coreVersion.LessThan(minVersion) {
 		return fmt.Errorf(
 			"%w: image was built with buildah %s, requires >= %s",
-			ErrUnsupportedBuildahVersion, versionStr, MinBuildahVersion,
+			ErrUnsupportedBuildahVersion, buildahVersionStr, MinBuildahVersion,
 		)
 	}
 
