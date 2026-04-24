@@ -317,13 +317,14 @@ func findIntermediateImage(store storage.Store, stageAlias string) (*storage.Ima
 	}
 
 	var errs []error
-	for _, img := range images {
-		if len(img.Names) != 0 {
+	for i := range images {
+		if len(images[i].Names) != 0 {
 			continue
 		}
 
-		labels, err := getImageLabels(store, &img)
+		labels, err := getImageLabels(store, &images[i])
 		if err != nil {
+			errs = append(errs, fmt.Errorf("getting labels for intermediate image %s: %w", images[i].ID, err))
 			continue
 		}
 
@@ -332,7 +333,7 @@ func findIntermediateImage(store storage.Store, stageAlias string) (*storage.Ima
 				"intermediate image %s: %w, "+
 					"ensure buildah >= %s is used for the build and consider using "+
 					"a clean image storage to avoid interference from previous builds",
-				img.ID, err, MinBuildahVersion,
+				images[i].ID, err, MinBuildahVersion,
 			))
 			continue
 		}
@@ -342,14 +343,14 @@ func findIntermediateImage(store storage.Store, stageAlias string) (*storage.Ima
 			errs = append(errs, fmt.Errorf(
 				"intermediate image %s (buildah %s): %w, "+
 					"make sure to pass --save-stages --stage-labels to the buildah build command",
-				img.ID, labels["io.buildah.version"], ErrMissingStageLabel,
+				images[i].ID, labels["io.buildah.version"], ErrMissingStageLabel,
 			))
 			continue
 		}
 
 		if stageName == stageAlias {
-			log.Printf("Found intermediate image %s for stage %q.", img.ID, stageAlias)
-			return &img, true, nil
+			log.Printf("Found intermediate image %s for stage %q.", images[i].ID, stageAlias)
+			return &images[i], true, nil
 		}
 	}
 
