@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestCheckBuildahImageVersion(t *testing.T) {
+func TestCheckBuildahVersionFromImage(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
 		labels    map[string]string
@@ -62,7 +62,7 @@ func TestCheckBuildahImageVersion(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			err := checkBuildahImageVersion(tc.labels)
+			err := checkBuildahVersionFromImage(tc.labels)
 			if tc.expectErr && err == nil {
 				t.Errorf("expected error but got nil")
 			}
