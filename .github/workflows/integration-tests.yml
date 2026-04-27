@@ -18,10 +18,14 @@ jobs:
       with:
         go-version-file: 'go.mod'
 
-    - name: Install buildah
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y buildah
+    # TODO: once buildah >= 1.44.0 is available in ubuntu repos, replace
+    # BuildCustomBuildah with system buildah and remove the custom build step.
+    # Until then, we build buildah from a specific commit that includes
+    # intermediate image labeling support (--save-stages --stage-labels).
+    #- name: Install buildah
+    #  run: |
+    #    sudo apt-get update
+    #    sudo apt-get install -y buildah
 
     - name: Install mage
       run: go install github.com/magefile/mage@latest
@@ -29,6 +33,24 @@ jobs:
     - name: Download dependencies
       run: mage tidy
 
-    - name: Run integration tests
+    - name: Install buildah build dependencies
       run: |
-        mage IntegrationTest
+        sudo apt-get update
+        sudo apt-get install -y libgpgme-dev libseccomp-dev
+
+    - name: Set up Go for buildah build
+      uses: actions/setup-go@v6
+      with:
+        # Buildah requires Go >= 1.25.5. Remove this step once custom buildah build is no longer needed.
+        go-version: '1.25.5'
+
+    - name: Build custom buildah with intermediate image labeling support
+      run: mage BuildCustomBuildah
+
+    - name: Restore Go version for capo
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Run integration tests
+      run: mage IntegrationTest
