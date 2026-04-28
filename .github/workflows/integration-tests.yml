@@ -18,10 +18,8 @@ jobs:
       with:
         go-version-file: 'go.mod'
 
-    # TODO: once buildah >= 1.44.0 is available in ubuntu repos, replace
-    # BuildCustomBuildah with system buildah and remove the custom build step.
-    # Until then, we build buildah from a specific commit that includes
-    # intermediate image labeling support (--save-stages --stage-labels).
+    # TODO: once buildah >= 1.44.0 is available in ubuntu repos, rollback this file to state 
+    # of this commit: https://github.com/konflux-ci/capo/commit/80cc28d7b9396021d468e9e42b3d687085ad6ad8
     #- name: Install buildah
     #  run: |
     #    sudo apt-get update
