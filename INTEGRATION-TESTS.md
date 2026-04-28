@@ -4,7 +4,8 @@
 
 Capo requires buildah with `--save-stages --stage-labels` support for correct
 intermediate image identification. This feature will be available in buildah
->= 1.44.0. Until then, a custom buildah binary must be built from source.
+\>= 1.44.0, not yet released at the time of writing. Until then, a custom
+buildah binary must be built from source.
 
 ### Building Custom Buildah
 
@@ -39,9 +40,9 @@ struct in `pkg/integration_test.go`.
 | Field | Type | Description |
 |---|---|---|
 | `Description` | `string` | Short test name, used in logs and summary |
-| `LongDescription` | `string` | Additional notes, describing the testing intention more closely, logged before the test runs |
-| `SkipTestReason` | `string` | If non-empty, test is skipped with this reason (for missing functionalities o unresolved bugs) |
-| `SkipBuild` | `bool` | Skip image building (for testing Scan errors) |
+| `LongDescription` | `string` | Additional notes describing the testing intention (or more closely describing missing feature/present bug), logged before the test runs |
+| `SkipTestReason` | `string` | If non-empty, test is skipped with this reason (for unimplemented features or unresolved bugs) |
+| `SkipBuild` | `bool` | Skip image building (for testing Scan errors when images are not expected to exist) |
 | `ExpectedError` | `string` | If set, test expects an error containing this substring |
 | `TestImage` | `BuildDefinition` | The multi-stage image to scan |
 | `BuilderImages` | `[]BuildDefinition` | Pre-built builder base images for the test |
@@ -70,7 +71,7 @@ must contain the full pullspec including registry and tag (e.g.
 ### Test Summary
 
 After all tests run, a summary is printed with pass/skip/fail counts and
-individual test results.
+individual test results. Skipped tests include their skip reason in the summary.
 
 ## Cleanup
 
@@ -93,5 +94,5 @@ testdata/
 
 ```bash
 rm -f testdata/bin/buildah
-mage buildCustomBuildah
+mage BuildCustomBuildah
 ```
