@@ -15,7 +15,7 @@ project, to deliver more accurate OCI image SBOMs to customers.
 ## Quickstart
 To install, simply run:
 ```sh
-go install github.com/konflux-ci/capo@latest
+go install github.com/konflux-ci/capo/cmd/capo@latest
 ```
 
 After capo is installed, you can build your image using buildah and run capo.
