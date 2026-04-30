@@ -52,10 +52,9 @@ func getBuildahBinary(t *testing.T) string {
 
 	version, err := sh.Output(binary, "--version")
 	if err != nil {
-		t.Logf("WARNING: could not determine buildah version: %v", err)
-	} else {
-		t.Logf("Buildah version: %s", version)
+		t.Fatalf("Could not determine buildah version: %v", err)
 	}
+	t.Logf("Buildah version: %s", version)
 
 	return binary
 }
@@ -282,7 +281,7 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/capo-builder/go_builder:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/go.mod`,
+											COPY go_syft.mod /opt/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
@@ -343,7 +342,7 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/capo-builder/go_builder:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/app1/go.mod
+											COPY go_syft.mod /opt/app1/go.mod
 											COPY go_sync.mod /base_unused/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -396,7 +395,7 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/builder-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/base/go.mod
+											COPY go_syft.mod /opt/base/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -441,7 +440,7 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/multi-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /base/go.mod
+											COPY go_syft.mod /base/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -489,7 +488,7 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/arg-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /content/app1/go.mod
+											COPY go_syft.mod /content/app1/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -530,7 +529,7 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/base1:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /content/app1/go.mod
+											COPY go_syft.mod /content/app1/go.mod
 											COPY go2.mod /untracked/base1/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -607,7 +606,7 @@ should be verified in mobster as well.`,
 				{
 					Tag: "localhost/builder1:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /base1/go.mod
+											COPY go_syft.mod /base1/go.mod
 											COPY go_text.mod /base1a/go.mod
 											COPY go2.mod /untracked/b1/go.mod`,
 					ContextDirectory: "../testdata/image_content",
@@ -650,58 +649,6 @@ should be verified in mobster as well.`,
 			},
 		},
 		{
-			Description: "Stage alias with same name as image",
-			LongDescription: `Stage alias "alpine" collides with real image name. If buildah/capo
-resolves "FROM alpine AS stage2" as the real alpine image instead of the stage
-alias, COPY --from=stage2 would copy the entire alpine filesystem and the test
-would fail with unexpected packages from the alpine base.`,
-			SkipTestReason: "[Priority: low] test on real build and align capo - should alpine be resolved as alpine:latest or as chained stage?",
-			TestImage: BuildDefinition{
-				Tag: "test-alias-matches-image",
-				ContainerfileContent: `FROM localhost/builderwithbadalias:latest AS alpine
-										COPY go_uuid.mod /content/app2/go.mod
-
-										FROM alpine AS stage2
-										COPY go_exp.mod /content/app3/go.mod
-
-										FROM scratch
-										COPY --from=alpine /base /base
-										COPY --from=alpine /content /content/stage1
-										COPY --from=stage2 / /content/all`,
-				ContextDirectory: "../testdata/image_content",
-			},
-			BuilderImages: []BuildDefinition{
-				{
-					Tag: "builderwithbadalias",
-					ContainerfileContent: `FROM scratch
-											COPY go.mod /content/app1/go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-			},
-			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/alpine@sha256:dummy",
-						StageAlias: "alpine",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/alpine@sha256:dummy",
-						StageAlias: "alpine",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/alpine@sha256:dummy",
-						StageAlias: "stage2",
-					},
-				},
-			},
-		},
-		{
 			Description:    "Path prefix collision - /opt should not match /optional",
 			SkipTestReason: "[Priority: high] bug in includes() - false positive prefix matching: /opt matches /optional",
 			TestImage: BuildDefinition{
@@ -718,7 +665,7 @@ would fail with unexpected packages from the alpine base.`,
 				{
 					Tag: "localhost/prefix-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /base/go.mod`,
+											COPY go_syft.mod /base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
@@ -761,7 +708,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				{
 					Tag: "localhost/overlap-base:latest",
 					ContainerfileContent: `FROM scratch
-										   COPY go.mod /base/go.mod`,
+										   COPY go_syft.mod /base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
@@ -792,7 +739,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				{
 					Tag: "localhost/overwrite-base:latest",
 					ContainerfileContent: `FROM scratch
-										   COPY go.mod /opt/app1/go.mod`,
+										   COPY go_syft.mod /opt/app1/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
@@ -832,7 +779,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				{
 					Tag: "localhost/builder-sync:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/app1/go.mod
+											COPY go_syft.mod /opt/app1/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -885,7 +832,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				{
 					Tag: "localhost/capo-builder/go_builder:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/app1/go.mod
+											COPY go_syft.mod /opt/app1/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -928,7 +875,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				{
 					Tag: "localhost/builder-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/base/go.mod
+											COPY go_syft.mod /opt/base/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -979,7 +926,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				{
 					Tag: "localhost/builder-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/base/go.mod
+											COPY go_syft.mod /opt/base/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -1030,7 +977,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				{
 					Tag: "localhost/builder-with-content:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/content/go.mod
+											COPY go_syft.mod /opt/content/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -1074,7 +1021,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				{
 					Tag: "localhost/diamond-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /base/go.mod
+											COPY go_syft.mod /base/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -1109,6 +1056,58 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 			},
 		},
 		{
+			Description: "[Chained stages] Stage alias with same name as image",
+			LongDescription: `Stage alias "alpine" collides with real image name.
+Verified by @BorekZnovustvoritel that both buildah and Docker resolve stage alias
+over registry image — "FROM alpine" references the stage, not
+docker.io/library/alpine:latest. This is a chained stage scenario.`,
+			SkipTestReason: "[Priority: low] chained stages not yet supported — stage alias takes precedence over image name (verified with buildah and Docker)",
+			TestImage: BuildDefinition{
+				Tag: "test-alias-matches-image",
+				ContainerfileContent: `FROM localhost/builderwithbadalias:latest AS alpine
+										COPY go_uuid.mod /content/app2/go.mod
+
+										FROM alpine AS stage2
+										COPY go_exp.mod /content/app3/go.mod
+
+										FROM scratch
+										COPY --from=alpine /base /base
+										COPY --from=alpine /content /content/stage1
+										COPY --from=stage2 / /content/all`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "builderwithbadalias",
+					ContainerfileContent: `FROM scratch
+											COPY go_syft.mod /content/app1/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
+						OriginType: "builder",
+						Pullspec:   "localhost/alpine@sha256:dummy",
+						StageAlias: "alpine",
+					},
+					{
+						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/alpine@sha256:dummy",
+						StageAlias: "alpine",
+					},
+					{
+						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/alpine@sha256:dummy",
+						StageAlias: "stage2",
+					},
+				},
+			},
+		},
+		{
 			Description:    "[Chained stages / external content] Content traced through intermediate builder via COPY chain with external image",
 			SkipTestReason: "[Priority: high] chained stages not yet supported, bug with external image in builder stage unresolved",
 			TestImage: BuildDefinition{
@@ -1130,7 +1129,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				{
 					Tag: "localhost/base-img:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /base/go.mod
+											COPY go_syft.mod /base/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -1184,7 +1183,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				{
 					Tag: "localhost/builder-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /base/go.mod
+											COPY go_syft.mod /base/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -1247,7 +1246,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "localhost/builder-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /base/go.mod
+											COPY go_syft.mod /base/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -1297,7 +1296,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "image",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/app2/go.mod`,
+											COPY go_syft.mod /opt/app2/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
@@ -1335,7 +1334,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "image",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /base/go.mod`,
+											COPY go_syft.mod /base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
@@ -1377,7 +1376,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "localhost/base1:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/base1/go.mod
+											COPY go_syft.mod /opt/base1/go.mod
 											COPY go2.mod /untracked/base1/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -1435,7 +1434,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "localhost/numfinal-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /base/go.mod
+											COPY go_syft.mod /base/go.mod
 											COPY go2.mod /untracked/base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -1472,7 +1471,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "localhost/numbuilder-base1:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /base1/go.mod
+											COPY go_syft.mod /base1/go.mod
 											COPY go2.mod /untracked/base1/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
@@ -1508,7 +1507,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "localhost/wildcard-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /app1/go.mod
+											COPY go_syft.mod /app1/go.mod
 											COPY go_uuid.mod /app2/go.mod
 											COPY go_exp.mod /other/go.mod`,
 					ContextDirectory: "../testdata/image_content",
@@ -1549,7 +1548,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "localhost/wildcard-inter-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /base/go.mod`,
+											COPY go_syft.mod /base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
@@ -1587,7 +1586,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "localhost/wildcard-both-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /app1/go.mod
+											COPY go_syft.mod /app1/go.mod
 											COPY go_uuid.mod /app2/go.mod
 											COPY go_exp.mod /other/go.mod`,
 					ContextDirectory: "../testdata/image_content",
@@ -1663,7 +1662,7 @@ when builder stage copies from external image and this content is copied to fina
 			},
 		},
 		{
-			Description: "[RUN --mount] --mount from external image in builder stage",
+			Description:    "[RUN --mount] --mount from external image in builder stage",
 			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
 			TestImage: BuildDefinition{
 				Tag: "test-mount-external-in-builder",
@@ -1679,7 +1678,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "localhost/mount-ext-base:latest",
 					ContainerfileContent: `FROM docker.io/library/alpine:latest
-											COPY go.mod /opt/app1/go.mod`,
+											COPY go_syft.mod /opt/app1/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
@@ -1732,7 +1731,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "localhost/mount-stage-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/app0/go.mod`,
+											COPY go_syft.mod /opt/app0/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
@@ -1782,7 +1781,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "localhost/mount-ext-final-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/app1/go.mod`,
+											COPY go_syft.mod /opt/app1/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
@@ -1831,7 +1830,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "localhost/mount-builder-final-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go.mod /opt/app1/go.mod`,
+											COPY go_syft.mod /opt/app1/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
@@ -1868,7 +1867,7 @@ when builder stage copies from external image and this content is copied to fina
 				{
 					Tag: "localhost/workdir-base:latest",
 					ContainerfileContent: `FROM scratch
-										   COPY go.mod /opt/app1/go.mod`,
+										   COPY go_syft.mod /opt/app1/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
@@ -1905,7 +1904,7 @@ when builder stage copies from external image and this content is copied to fina
 					Tag: "localhost/workdir-inherited-base:latest",
 					ContainerfileContent: `FROM scratch
 										   WORKDIR /opt
-										   COPY go.mod app1/go.mod`,
+										   COPY go_syft.mod app1/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
