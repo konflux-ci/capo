@@ -378,6 +378,9 @@ func checkBuildahVersionFromImage(labels map[string]string) error {
 		return fmt.Errorf("%w: could not parse buildah version %q: %w", ErrUnsupportedBuildahVersion, buildahVersionStr, err)
 	}
 
+	// Accept prerelease versions (e.g. 1.43.0-dev) for integration tests build
+	// buildah from a specific commit where --save-stages --stage-labels is present
+	// but the version is not yet >= 1.44.0. See ISV-7179 for removal.
 	if buildahVersion.Prerelease() != "" {
 		return nil
 	}

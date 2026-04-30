@@ -282,4 +282,4 @@ require (
 )
 
 // WARNING: when changing, make sure to grep the version number in CI
-go 1.24.4
+go 1.25.5

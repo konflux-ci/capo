@@ -18,7 +18,7 @@ if command -v buildah &>/dev/null; then
         echo "is not needed. Your system buildah is up to date, supporting saving and labeling"
         echo "intermediate images with --save-stages --stage-labels."
         echo "Once buildah >= 1.44.0 is widely available, this custom build infrastructure"
-        echo "can be removed and buildah can be declared as a system dependency. See <ticket placeholder>."
+        echo "can be removed and buildah can be declared as a system dependency. See ISV-7179."
         exit 0
     fi
 fi

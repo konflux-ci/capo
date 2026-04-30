@@ -36,19 +36,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libgpgme-dev libseccomp-dev
 
-    - name: Set up Go for buildah build
-      uses: actions/setup-go@v6
-      with:
-        # Buildah requires Go >= 1.25.5. Remove this step once custom buildah build is no longer needed.
-        go-version: '1.25.5'
-
     - name: Build custom buildah with intermediate image labeling support
       run: mage BuildCustomBuildah
-
-    - name: Restore Go version for capo
-      uses: actions/setup-go@v6
-      with:
-        go-version-file: 'go.mod'
 
     - name: Run integration tests
       run: mage IntegrationTest
