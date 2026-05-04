@@ -4,9 +4,9 @@ package capo
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -18,23 +18,29 @@ import (
 	"go.podman.io/storage"
 )
 
+// BuildDefinition describes a container image to build for a test.
 type BuildDefinition struct {
-	Tag                  string
+	// Tag is the image tag (e.g. "localhost/foo:latest").
+	// Auto-normalized: adds "localhost/" if no registry, ":latest" if no tag.
+	// Random UUID if empty.
+	Tag string
+	// ContainerfileContent is inline containerfile content. File paths will not work.
 	ContainerfileContent string
-	ContextDirectory     string
+	// ContextDirectory is the build context path relative to pkg/
+	// (e.g. "../testdata/image_content").
+	ContextDirectory string
 }
 
+// TestCase describes a single integration test: build images, scan, compare results.
 type TestCase struct {
-	Description     string
-	LongDescription string
-	SkipTestReason  string
-	TestImage       BuildDefinition
-	BuilderImages   []BuildDefinition
-	ExpectedResult  PackageMetadata
-	// SkipBuild skips image building for testing Scan() errors
-	// when the referenced images are not expected to exist in storage.
-	SkipBuild     bool
-	ExpectedError string
+	// SkipTestReason, if non-empty, skips this test via t.Skip with the given reason.
+	SkipTestReason string
+	// TestImage is the multi-stage image to scan (built with --save-stages --stage-labels).
+	TestImage BuildDefinition
+	// BuilderImages are pre-built builder base images / external images referenced by TestImage.
+	BuilderImages []BuildDefinition
+	// ExpectedResult is the expected scan output for comparison with capo output.
+	ExpectedResult PackageMetadata
 }
 
 // getBuildahBinary returns the path to buildah binary to use for tests.
@@ -59,18 +65,6 @@ func getBuildahBinary(t *testing.T) string {
 	return binary
 }
 
-func (testCase *TestCase) checkExpectedError(t *testing.T, err error) error {
-	if testCase.ExpectedError == "" {
-		return err
-	}
-	if !strings.Contains(err.Error(), testCase.ExpectedError) {
-		t.Errorf("[FAIL] expected error containing %q but got: %v", testCase.ExpectedError, err)
-		return fmt.Errorf("wrong error: %w", err)
-	}
-	t.Logf("[PASS] Got expected error: %v", err)
-	return nil
-}
-
 func (testCase *TestCase) build(store storage.Store, buildahBinary string) error {
 	for _, builderImage := range testCase.BuilderImages {
 		if err := builderImage.buildImage(store, buildahBinary, true); err != nil {
@@ -84,36 +78,19 @@ func (testCase *TestCase) build(store storage.Store, buildahBinary string) error
 }
 
 func (testCase *TestCase) run(t *testing.T, store storage.Store, buildahBinary string) error {
-	if testCase.Description != "" {
-		t.Logf("=== Running test: %s ===", testCase.Description)
-	}
-	if testCase.LongDescription != "" {
-		t.Logf("Notes:\n%s", testCase.LongDescription)
-	}
-	if testCase.SkipTestReason != "" {
-		t.Logf("Test skipped: %s", testCase.SkipTestReason)
-		return nil
-	}
-	if !testCase.SkipBuild {
-		defer testCase.cleanUp(t, store)
-		if err := testCase.build(store, buildahBinary); err != nil {
-			return testCase.checkExpectedError(t, err)
-		}
+	defer testCase.cleanUp(t, store)
+	if err := testCase.build(store, buildahBinary); err != nil {
+		return err
 	}
 
 	stages, err := containerfile.Parse(strings.NewReader(testCase.TestImage.ContainerfileContent), containerfile.BuildOptions{})
 	if err != nil {
-		return testCase.checkExpectedError(t, err)
+		return err
 	}
 
 	result, err := Scan(stages)
 	if err != nil {
-		return testCase.checkExpectedError(t, err)
-	}
-
-	if testCase.ExpectedError != "" {
-		t.Errorf("expected error containing %q but all steps succeeded", testCase.ExpectedError)
-		return errors.New("expected error but got none")
+		return err
 	}
 
 	// Compare packages order-independently using go-cmp:
@@ -268,9 +245,8 @@ func normalizeTestCaseTags(testCase *TestCase) {
 // and compares results against expected package metadata.
 func TestIntegration(t *testing.T) {
 
-	testCases := []TestCase{
-		{
-			Description: "Identification of the builder base image content - no intermediate image, single file copy",
+	testCases := map[string]TestCase{
+		"Identification of the builder base image content - no intermediate image, single file copy": {
 			TestImage: BuildDefinition{
 				ContainerfileContent: `FROM localhost/capo-builder/go_builder:latest as builder
 										FROM scratch
@@ -296,8 +272,7 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		{
-			Description: "Identification of the builder and intermediate content - single file COPY from intermediate",
+		"Identification of the builder and intermediate content - single file COPY from intermediate": {
 			TestImage: BuildDefinition{
 				Tag: "test-single-file-copy",
 				ContainerfileContent: `FROM localhost/singlefile-base:latest AS builder
@@ -326,8 +301,7 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		{
-			Description: "Identification of the builder and intermediate content - directory copy",
+		"Identification of the builder and intermediate content - directory copy": {
 			TestImage: BuildDefinition{
 				Tag: "test-builder-intermediate",
 				ContainerfileContent: `FROM localhost/capo-builder/go_builder:latest AS builder
@@ -364,18 +338,7 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		{
-			Description: "Non-existent builder base image - Scan fails on pullspec resolve",
-			SkipBuild:   true,
-			TestImage: BuildDefinition{
-				ContainerfileContent: `FROM nonexistent:latest as builder
-										FROM scratch
-										COPY --from=builder /file /file`,
-			},
-			ExpectedError: "failed to resolve pullspec",
-		},
-		{
-			Description: "Two stages with same pullspec but different intermediate content",
+		"Two stages with same pullspec but different intermediate content": {
 			TestImage: BuildDefinition{
 				Tag: "test-same-pullspec-different-content",
 				ContainerfileContent: `FROM localhost/builder-base:latest AS stage1
@@ -423,8 +386,7 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		{
-			Description: "Multiple sources in single COPY --from command",
+		"Multiple sources in single COPY --from command": {
 			TestImage: BuildDefinition{
 				Tag: "test-multi-source-copy",
 				ContainerfileContent: `FROM localhost/multi-base:latest AS builder
@@ -468,8 +430,7 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		{
-			Description: "ARG substitution",
+		"ARG substitution": {
 			TestImage: BuildDefinition{
 				Tag: "test-arg-substitution",
 				ContainerfileContent: `ARG BASE_IMG=localhost/arg-base:latest
@@ -510,8 +471,43 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		{
-			Description:    "Content cascade through COPY --from between builder stages",
+		"Multiarch build args - TARGETARCH in builder base image tag": {
+			TestImage: BuildDefinition{
+				Tag: "test-multiarch-targetarch",
+				ContainerfileContent: `FROM localhost/multiarch-base:${TARGETARCH} AS builder
+										COPY go_uuid.mod /opt/app2/go.mod
+
+										FROM scratch
+										COPY --from=builder /opt/ /opt/`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "localhost/multiarch-base:" + runtime.GOARCH,
+					ContainerfileContent: `FROM scratch
+											COPY go_syft.mod /opt/app1/go.mod
+											COPY go2.mod /untracked/base/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
+						OriginType: "builder",
+						Pullspec:   "localhost/multiarch-base@sha256:dummy",
+						StageAlias: "builder",
+					},
+					{
+						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/multiarch-base@sha256:dummy",
+						StageAlias: "builder",
+					},
+				},
+			},
+		},
+		"Content cascade through COPY --from between builder stages": {
 			SkipTestReason: "[Priority: medium] final image is expected to contain content also from forwarder builder base image (exp package). This mght be an edgecase in capo tracing content implementation",
 			TestImage: BuildDefinition{
 				Tag: "test-copy-cascade-builders",
@@ -564,26 +560,16 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		{
-			Description:    "Builder used as final stage base - builder content excluded (parent content), intermediate traced",
+		// A builder stage can be used as the final image base (FROM alias_as_base).
+		// When this happens, its base image content becomes the final image's parent
+		// content — externally built, not reported by capo (responsibility of parent
+		// content identification in mobster). However, its intermediate content
+		// (created during THIS build) remains intermediate and should be reported,
+		// because fixing it requires changing this containerfile.
+		// This distinction (parent base vs intermediate of a stage used as final base)
+		// should be verified in mobster as well.
+		"Builder used as final stage base - builder content excluded (parent content), intermediate traced": {
 			SkipTestReason: "[Priority: low/medium] capo does not distinguish builder content from final base content when builder is used as FROM base",
-			LongDescription: `
-A builder stage can be used as the final image base (FROM alias_as_base).
-When this happens, its base image content becomes the final image's parent
-content — externally built, not reported by capo (responsibility of parent
-content identification in mobster).
-However, its intermediate content (created during THIS build) remains
-intermediate and should be reported, because fixing it requires changing
-this containerfile.
-
-Expected output:
-- alias_as_base BASE content (sync from builder2) → NOT in output (now final's parent)
-- alias_as_base INTERMEDIATE content (exp) → IN output as intermediate
-- Content traced through alias_as_base back to builder → IN output (traced to builder)
-- Direct COPY --from=builder in final → IN output
-
-This distinction (parent base vs intermediate of a stage used as final base)
-should be verified in mobster as well.`,
 			TestImage: BuildDefinition{
 				Tag: "test-final-uses-builder-base",
 				ContainerfileContent: `FROM localhost/builder1:latest AS builder
@@ -648,8 +634,7 @@ should be verified in mobster as well.`,
 				},
 			},
 		},
-		{
-			Description:    "Path prefix collision - /opt should not match /optional",
+		"Path prefix collision - /opt should not match /optional": {
 			SkipTestReason: "[Priority: high] bug in includes() - false positive prefix matching: /opt matches /optional",
 			TestImage: BuildDefinition{
 				Tag: "test-path-prefix-collision",
@@ -680,13 +665,12 @@ should be verified in mobster as well.`,
 				},
 			},
 		},
-		{
-			Description: "Overlapping COPY destinations in builder stage",
-			LongDescription: `Two providers copy go.mod into the same /dest/ in builder stage.
-Provider2 overwrites provider1's file. Only exp package (provider2) should be in the
-final image. However, capo currently cannot distinguish overlapping writes —
-it sees both files in the intermediate layer diff and reports both. Correct
-behavior requires Containerfile-level instruction ordering awareness.`,
+		// Two providers copy go.mod into the same /dest/ in builder stage.
+		// Provider2 overwrites provider1's file. Only exp package (provider2) should be
+		// in the final image. However, capo currently cannot distinguish overlapping
+		// writes — it sees both files in the intermediate layer diff and reports both.
+		// Correct behavior requires Containerfile-level instruction ordering awareness.
+		"Overlapping COPY destinations in builder stage": {
 			SkipTestReason: "[Priority: medium] capo does not track overlapping COPY destinations - reports both providers instead of only the last one",
 			TestImage: BuildDefinition{
 				Tag: "test-overlapping-dest",
@@ -723,8 +707,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				},
 			},
 		},
-		{
-			Description:    "Intermediate content overwrites builder base content at same path",
+		"Intermediate content overwrites builder base content at same path": {
 			SkipTestReason: "[Priority: medium] capo scans builder base and intermediate independently - does not detect that intermediate overwrites base at same path",
 			TestImage: BuildDefinition{
 				Tag: "test-intermediate-overwrites-base",
@@ -754,8 +737,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				},
 			},
 		},
-		{
-			Description:    "[Chained stages] Grandparent, parent and child builder cascade with intermediate content",
+		"[Chained stages] Grandparent, parent and child builder cascade with intermediate content": {
 			SkipTestReason: "[Priority: high] chained stages not yet supported",
 			TestImage: BuildDefinition{
 				Tag: "test-chained-stages-cascade",
@@ -813,8 +795,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				},
 			},
 		},
-		{
-			Description:    "[Chained stages] Empty child chained stage (no build instructions)",
+		"[Chained stages] Empty child chained stage (no build instructions)": {
 			SkipTestReason: "[Priority: high] chained stages not yet supported",
 			TestImage: BuildDefinition{
 				Tag: "test-empty-chained-stage",
@@ -854,8 +835,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				},
 			},
 		},
-		{
-			Description:    "[Chained stages] Multiple empty chained stages with intermediate only in last stage",
+		"[Chained stages] Multiple empty chained stages with intermediate only in last stage": {
 			SkipTestReason: "[Priority: high] chained stages not yet supported",
 			TestImage: BuildDefinition{
 				Tag: "test-empty-chain-cascade",
@@ -897,8 +877,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				},
 			},
 		},
-		{
-			Description:    "[Chained stages] Complex cascade: non-empty, empty, non-empty, empty, non-empty",
+		"[Chained stages] Complex cascade: non-empty, empty, non-empty, empty, non-empty": {
 			SkipTestReason: "[Priority: high] chained stages not yet supported",
 			TestImage: BuildDefinition{
 				Tag: "test-complex-cascade",
@@ -960,8 +939,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				},
 			},
 		},
-		{
-			Description:    "[Chained stages] Empty chained stages copying only builder base content",
+		"[Chained stages] Empty chained stages copying only builder base content": {
 			SkipTestReason: "[Priority: high] chained stages not yet supported",
 			TestImage: BuildDefinition{
 				Tag: "test-empty-chain-builder-only",
@@ -993,8 +971,7 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				},
 			},
 		},
-		{
-			Description:    "[Chained stages] Diamond dependency - two branches from same parent",
+		"[Chained stages] Diamond dependency - two branches from same parent": {
 			SkipTestReason: "[Priority: high] chained stages not yet supported",
 			TestImage: BuildDefinition{
 				Tag: "test-diamond-dependency",
@@ -1055,12 +1032,11 @@ behavior requires Containerfile-level instruction ordering awareness.`,
 				},
 			},
 		},
-		{
-			Description: "[Chained stages] Stage alias with same name as image",
-			LongDescription: `Stage alias "alpine" collides with real image name.
-Verified by @BorekZnovustvoritel that both buildah and Docker resolve stage alias
-over registry image — "FROM alpine" references the stage, not
-docker.io/library/alpine:latest. This is a chained stage scenario.`,
+		// Stage alias "alpine" collides with real image name.
+		// Verified by @BorekZnovustvoritel that both buildah and Docker resolve stage
+		// alias over registry image — "FROM alpine" references the stage, not
+		// docker.io/library/alpine:latest. This is a chained stage scenario.
+		"[Chained stages] Stage alias with same name as image": {
 			SkipTestReason: "[Priority: low] chained stages not yet supported — stage alias takes precedence over image name (verified with buildah and Docker)",
 			TestImage: BuildDefinition{
 				Tag: "test-alias-matches-image",
@@ -1107,8 +1083,7 @@ docker.io/library/alpine:latest. This is a chained stage scenario.`,
 				},
 			},
 		},
-		{
-			Description:    "[Chained stages / external content] Content traced through intermediate builder via COPY chain with external image",
+		"[Chained stages / external content] Content traced through intermediate builder via COPY chain with external image": {
 			SkipTestReason: "[Priority: high] chained stages not yet supported, bug with external image in builder stage unresolved",
 			TestImage: BuildDefinition{
 				Tag: "test-chain-with-external",
@@ -1164,8 +1139,7 @@ docker.io/library/alpine:latest. This is a chained stage scenario.`,
 				},
 			},
 		},
-		{
-			Description:    "[External content] External COPY in final stage",
+		"[External content] External COPY in final stage": {
 			SkipTestReason: "[Priority: medium] origin_type 'external' not yet implemented - capo reports external content as 'builder'. Works otherwise.",
 			TestImage: BuildDefinition{
 				Tag: "test-external-copy-final",
@@ -1217,17 +1191,12 @@ docker.io/library/alpine:latest. This is a chained stage scenario.`,
 				},
 			},
 		},
-		{
-			Description: "[External content] External COPY in builder stage - content traced through builder to final",
-			LongDescription: `This test introduces OriginType "external" — a new type needed to distinguish
-content from external images (COPY --from=<image> or RUN --mount from=<image>)
-from builder base content and intermediate content.
-
-This distinction is required because in SBOM we model intermediate content as
-DESCENDANT_OF builder base image. External image placed in builder stage has no such relationship
-to the builder base - it originates from a separate image. Without "external" type,
-we cannot determine which builder base image a given intermediate image belongs to
-when builder stage copies from external image and this content is copied to final image.`,
+		// OriginType "external" distinguishes content from external images
+		// (COPY --from=<image> or RUN --mount from=<image>) from builder base and
+		// intermediate content. Required because in SBOM, intermediate content is
+		// modeled as DESCENDANT_OF builder base image — external image content in a
+		// builder stage has no such relationship to the builder base.
+		"[External content] External COPY in builder stage - content traced through builder to final": {
 			SkipTestReason: "[Priority: high] bug: traceSource panic on nil stage from external COPY --from in builder",
 			TestImage: BuildDefinition{
 				Tag: "test-external-copy-in-builder",
@@ -1280,8 +1249,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description:    "[Pullspec normalization] Pullspec is missing registry and tag/digest",
+		"[Pullspec normalization] Pullspec is missing registry and tag/digest": {
 			SkipTestReason: "[Priority: medium/low] pullspec normalization not supported - store.Lookup does exact match with registry and tag/digest",
 			TestImage: BuildDefinition{
 				Tag: "test-simple-pullspec",
@@ -1317,8 +1285,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description:    "[Pullspec normalization] Pullspec missing registry and alias is identical to alias - FROM image AS image",
+		"[Pullspec normalization] Pullspec missing registry and alias is identical to alias - FROM image AS image": {
 			SkipTestReason: "[Priority: low] resolved, when previous test passes",
 			TestImage: BuildDefinition{
 				Tag: "test-identical-pullspec-alias",
@@ -1355,8 +1322,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description: "[Numeric index COPY --from] Stages do not have aliases - references are using numeric indices instead of aliases",
+		"[Numeric index COPY --from] Stages do not have aliases - references are using numeric indices instead of aliases": {
 			TestImage: BuildDefinition{
 				Tag: "test-numeric-indices",
 				ContainerfileContent: `FROM localhost/base1:latest
@@ -1417,8 +1383,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description:    "[Numeric index COPY --from] COPY --from with numeric index in final stage",
+		"[Numeric index COPY --from] COPY --from with numeric index in final stage": {
 			SkipTestReason: "[Priority: medium/high] COPY --from=0 resolved as pullspec instead of stage index when stage has alias (fails with 'could not find resolved pullspec')",
 			TestImage: BuildDefinition{
 				Tag: "test-numeric-copy-from-final",
@@ -1450,8 +1415,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description:    "[Numeric index COPY --from] COPY --from with numeric index in builder stage",
+		"[Numeric index COPY --from] COPY --from with numeric index in builder stage": {
 			SkipTestReason: "[Priority: high] COPY --from=0 in builder stage causes nil pointer panic in traceSource when stage has alias (same as in External COPY in builder stage... test)",
 			TestImage: BuildDefinition{
 				Tag: "test-numeric-copy-from-builder",
@@ -1494,8 +1458,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description: "[Wildcard COPY] Builder base content",
+		"[Wildcard COPY] Builder base content": {
 			TestImage: BuildDefinition{
 				Tag: "test-wildcard-copy-builder-base",
 				ContainerfileContent: `FROM localhost/wildcard-base:latest AS builder
@@ -1530,8 +1493,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description:    "[Wildcard COPY] Intermediate content",
+		"[Wildcard COPY] Intermediate content": {
 			SkipTestReason: "[Priority: high] includes() with wildcard /app* does not match intermediate paths like app1/go.mod",
 			TestImage: BuildDefinition{
 				Tag: "test-wildcard-copy-intermediate",
@@ -1569,8 +1531,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description:    "[Wildcard COPY] Builder base and intermediate content",
+		"[Wildcard COPY] Builder base and intermediate content": {
 			SkipTestReason: "[Priority: high] includes() with wildcard /app* does not match intermediate paths like app1/go.mod",
 			TestImage: BuildDefinition{
 				Tag: "test-wildcard-copy-both",
@@ -1615,8 +1576,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description:    "[FROM special] FROM scratch as builder base",
+		"[FROM special] FROM scratch as builder base": {
 			SkipTestReason: "[Priority: high] scratch is not handled in resolvePullspecs",
 			TestImage: BuildDefinition{
 				Tag: "test-from-scratch-builder",
@@ -1638,8 +1598,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description:    "[FROM special] FROM oci:archive as builder base",
+		"[FROM special] FROM oci:archive as builder base": {
 			SkipTestReason: "[Priority: high] oci:archive transport not handled in resolvePullspecs",
 			TestImage: BuildDefinition{
 				Tag: "test-from-oci-archive-builder",
@@ -1661,8 +1620,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description:    "[RUN --mount] --mount from external image in builder stage",
+		"[RUN --mount] --mount from external image in builder stage": {
 			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
 			TestImage: BuildDefinition{
 				Tag: "test-mount-external-in-builder",
@@ -1711,8 +1669,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description:    "[RUN --mount] --mount from builder stage in another builder stage",
+		"[RUN --mount] --mount from builder stage in another builder stage": {
 			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
 			TestImage: BuildDefinition{
 				Tag: "test-mount-builder-stage",
@@ -1764,8 +1721,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description:    "[RUN --mount] --mount from external image in final stage",
+		"[RUN --mount] --mount from external image in final stage": {
 			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
 			TestImage: BuildDefinition{
 				Tag: "test-mount-external-final",
@@ -1813,8 +1769,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description:    "[RUN --mount] --mount from builder stage in final stage",
+		"[RUN --mount] --mount from builder stage in final stage": {
 			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
 			TestImage: BuildDefinition{
 				Tag: "test-mount-builder-final",
@@ -1851,8 +1806,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description: "[WORKDIR] WORKDIR set in intermediate image",
+		"[WORKDIR] WORKDIR set in intermediate image": {
 			TestImage: BuildDefinition{
 				Tag: "test-workdir-relative-dest",
 				ContainerfileContent: `FROM localhost/workdir-base:latest AS builder
@@ -1888,8 +1842,7 @@ when builder stage copies from external image and this content is copied to fina
 				},
 			},
 		},
-		{
-			Description: "[WORKDIR] WORKDIR inherited from builder base image",
+		"[WORKDIR] WORKDIR inherited from builder base image": {
 			TestImage: BuildDefinition{
 				Tag: "test-workdir-inherited",
 				ContainerfileContent: `FROM localhost/workdir-inherited-base:latest AS builder
@@ -1926,11 +1879,6 @@ when builder stage copies from external image and this content is copied to fina
 			},
 		},
 	}
-	// Normalize all tags in test cases
-	for i := range testCases {
-		normalizeTestCaseTags(&testCases[i])
-	}
-
 	store, err := SetupStore()
 	if err != nil {
 		t.Fatalf("Failed to setup store: %+v", err)
@@ -1938,36 +1886,45 @@ when builder stage copies from external image and this content is copied to fina
 
 	buildahBinary := getBuildahBinary(t)
 
-	type skippedTest struct {
-		description string
-		reason      string
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			if tc.SkipTestReason != "" {
+				t.Skip(tc.SkipTestReason)
+			}
+			normalizeTestCaseTags(&tc)
+			if err := tc.run(t, store, buildahBinary); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
-	var passed, failed []string
-	var skipped []skippedTest
-	for _, testCase := range testCases {
-		if testCase.SkipTestReason != "" {
-			skipped = append(skipped, skippedTest{testCase.Description, testCase.SkipTestReason})
-			t.Logf("=== Test case %s skipped. ===", testCase.Description)
-			continue
-		}
-		err := testCase.run(t, store, buildahBinary)
-		if err != nil {
-			failed = append(failed, testCase.Description)
-			t.Errorf("=== Test case %s failed: %+v ===", testCase.Description, err)
-		} else {
-			passed = append(passed, testCase.Description)
-			t.Logf("=== Test case %s passed. ===", testCase.Description)
-		}
+}
+
+type ErrorTestCase struct {
+	ContainerfileContent string
+	ExpectedError        error
+}
+
+func TestIntegrationScanErrors(t *testing.T) {
+	testCases := map[string]ErrorTestCase{
+		"Non-existent builder base image - Scan fails on pullspec resolve": {
+			ContainerfileContent: `FROM nonexistent:latest as builder
+								   FROM scratch
+								   COPY --from=builder /file /file`,
+			ExpectedError: ErrPullspecResolve,
+		},
 	}
 
-	t.Logf("\n=== SUMMARY: %d passed, %d skipped, %d failed ===", len(passed), len(skipped), len(failed))
-	for _, name := range passed {
-		t.Logf("  PASS: %s", name)
-	}
-	for _, s := range skipped {
-		t.Logf("  SKIP: %s | %s", s.description, s.reason)
-	}
-	for _, name := range failed {
-		t.Logf("  FAIL: %s", name)
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			stages, err := containerfile.Parse(strings.NewReader(tc.ContainerfileContent), containerfile.BuildOptions{})
+			if err != nil {
+				t.Fatalf("Failed to parse containerfile: %v", err)
+			}
+
+			_, err = Scan(stages)
+			if !errors.Is(err, tc.ExpectedError) {
+				t.Fatalf("expected %v, got: %v", tc.ExpectedError, err)
+			}
+		})
 	}
 }

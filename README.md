@@ -56,3 +56,28 @@ The project also uses
 curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.6.1
 mage lint
 ```
+
+### Integration Tests
+
+Integration tests require buildah with `--save-stages --stage-labels` support
+(>= 1.44.0). Until that version is widely available, a pre-release version of
+buildah is built from source:
+
+```sh
+mage buildCustomBuildah
+```
+
+This places the binary in `testdata/bin/buildah` without modifying your system
+buildah. If your system buildah already supports `--save-stages`, the build is
+skipped automatically.
+
+To run integration tests:
+
+```sh
+mage integrationTest
+```
+
+The test runner uses `testdata/bin/buildah` if present, otherwise falls back to
+system buildah. Test cases are defined in `pkg/integration_test.go` — see the
+`TestCase` and `BuildDefinition` struct documentation for details on writing
+new tests.
