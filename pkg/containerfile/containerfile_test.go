@@ -533,6 +533,46 @@ func TestParse(t *testing.T) {
 				}, Mounts: []Mount{}},
 			},
 		},
+		"COPY source paths are normalized to absolute clean paths": {
+			containerfile: `FROM docker.io/library/alpine:latest AS builder
+							FROM scratch
+							COPY --from=builder relative/auntie/jane /dest1
+							COPY --from=builder /foo//bar /dest2
+							COPY --from=builder /foo/baz/../bar /dest3`,
+			expected: []Stage{
+				{
+					Alias:  "builder",
+					Base:   "docker.io/library/alpine:latest",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+				},
+				{
+					Alias: FinalStage,
+					Base:  "scratch",
+					Copies: []Copy{
+						{
+							From:        "builder",
+							Sources:     []string{"/relative/auntie/jane"},
+							Destination: "/dest1",
+							Type:        CopyTypeBuilder,
+						},
+						{
+							From:        "builder",
+							Sources:     []string{"/foo/bar"},
+							Destination: "/dest2",
+							Type:        CopyTypeBuilder,
+						},
+						{
+							From:        "builder",
+							Sources:     []string{"/foo/bar"},
+							Destination: "/dest3",
+							Type:        CopyTypeBuilder,
+						},
+					},
+					Mounts: []Mount{},
+				},
+			},
+		},
 		"complex multi-stage with multiple final copies": {
 			containerfile: `FROM docker.io/library/fedora:latest AS builder1
 							FROM docker.io/alpine/helm:latest AS builder2

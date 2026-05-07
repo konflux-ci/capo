@@ -635,7 +635,6 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"Path prefix collision - /opt should not match /optional": {
-			SkipTestReason: "[Priority: high] bug in includes() - false positive prefix matching: /opt matches /optional",
 			TestImage: BuildDefinition{
 				Tag: "test-path-prefix-collision",
 				ContainerfileContent: `FROM localhost/prefix-base:latest AS builder
@@ -660,6 +659,233 @@ func TestIntegration(t *testing.T) {
 						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
 						OriginType: "intermediate",
 						Pullspec:   "localhost/prefix-base@sha256:dummy",
+						StageAlias: "builder",
+					},
+				},
+			},
+		},
+		"[Path normalization] Relative source path in COPY --from": {
+			TestImage: BuildDefinition{
+				Tag: "test-path-relative-source",
+				ContainerfileContent: `FROM localhost/pathnorm-base:latest AS builder
+										COPY go_uuid.mod /opt/go.mod
+
+										FROM scratch
+										COPY --from=builder opt/go.mod /opt/go.mod`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "localhost/pathnorm-base:latest",
+					ContainerfileContent: `FROM scratch
+											COPY go_syft.mod /base/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/pathnorm-base@sha256:dummy",
+						StageAlias: "builder",
+					},
+				},
+			},
+		},
+		"[Path normalization] Double slashes in COPY --from source": {
+			TestImage: BuildDefinition{
+				Tag: "test-path-double-slashes",
+				ContainerfileContent: `FROM localhost/pathnorm-base:latest AS builder
+										COPY go_uuid.mod /opt/go.mod
+
+										FROM scratch
+										COPY --from=builder //opt//go.mod /opt/go.mod`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "localhost/pathnorm-base:latest",
+					ContainerfileContent: `FROM scratch
+											COPY go_syft.mod /base/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/pathnorm-base@sha256:dummy",
+						StageAlias: "builder",
+					},
+				},
+			},
+		},
+		"[Path normalization] Dot-dot segments in COPY --from source": {
+			TestImage: BuildDefinition{
+				Tag: "test-path-dotdot",
+				ContainerfileContent: `FROM localhost/pathnorm-base:latest AS builder
+										COPY go_uuid.mod /opt/go.mod
+
+										FROM scratch
+										COPY --from=builder /opt/../opt/go.mod /opt/go.mod`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "localhost/pathnorm-base:latest",
+					ContainerfileContent: `FROM scratch
+											COPY go_syft.mod /base/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/pathnorm-base@sha256:dummy",
+						StageAlias: "builder",
+					},
+				},
+			},
+		},
+		"[Path normalization] Dot segments in COPY --from source": {
+			TestImage: BuildDefinition{
+				Tag: "test-path-dot",
+				ContainerfileContent: `FROM localhost/pathnorm-base:latest AS builder
+										COPY go_uuid.mod /opt/go.mod
+
+										FROM scratch
+										COPY --from=builder /opt/./go.mod /opt/go.mod`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "localhost/pathnorm-base:latest",
+					ContainerfileContent: `FROM scratch
+											COPY go_syft.mod /base/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/pathnorm-base@sha256:dummy",
+						StageAlias: "builder",
+					},
+				},
+			},
+		},
+		"[Path normalization] Directory copy with dot-dot and trailing slash": {
+			TestImage: BuildDefinition{
+				Tag: "test-path-dir-dotdot",
+				ContainerfileContent: `FROM localhost/pathnorm-base:latest AS builder
+										COPY go_uuid.mod /content/go.mod
+
+										FROM scratch
+										COPY --from=builder /foo/../content/ /content/`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "localhost/pathnorm-base:latest",
+					ContainerfileContent: `FROM scratch
+											COPY go_syft.mod /base/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/pathnorm-base@sha256:dummy",
+						StageAlias: "builder",
+					},
+				},
+			},
+		},
+		// traceSource walks COPY destinations in a builder stage to find where content
+		// originated. The old strings.HasPrefix check would cause /opt to match /optional.
+		// This test verifies that tracing /opt through a stage that also has /optional
+		// doesn't incorrectly pull in /optional's content.
+		"[traceSource] Prefix collision during content tracing across stages": {
+			TestImage: BuildDefinition{
+				Tag: "test-trace-prefix-collision",
+				ContainerfileContent: `FROM localhost/trace-prefix-provider:latest AS provider
+
+										FROM localhost/trace-prefix-base:latest AS builder
+										COPY --from=provider /opt/go.mod /opt/go.mod
+										COPY --from=provider /optional/go.mod /optional/go.mod
+
+										FROM scratch
+										COPY --from=builder /opt/go.mod /opt/go.mod`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "localhost/trace-prefix-provider:latest",
+					ContainerfileContent: `FROM scratch
+											COPY go_uuid.mod /opt/go.mod
+											COPY go_exp.mod /optional/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+				{
+					Tag: "localhost/trace-prefix-base:latest",
+					ContainerfileContent: `FROM scratch
+											COPY go_syft.mod /base/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
+						OriginType: "builder",
+						Pullspec:   "localhost/trace-prefix-provider@sha256:dummy",
+						StageAlias: "provider",
+					},
+				},
+			},
+		},
+		// When the final stage copies a directory from a builder, and that directory
+		// contains mixed content (some files copied from a previous stage, plus builder
+		// base content), traceSource must add the source to the accumulator for this
+		// stage too, not just trace through to the previous stage.
+		"[traceSource] Directory source broader than traced COPY destinations": {
+			TestImage: BuildDefinition{
+				Tag: "test-trace-broad-source",
+				ContainerfileContent: `FROM localhost/trace-broad-base:latest AS builder
+										COPY go_uuid.mod /app/intermediate/go.mod
+
+										FROM scratch
+										COPY --from=builder /app/ /app/`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "localhost/trace-broad-base:latest",
+					ContainerfileContent: `FROM scratch
+											COPY go_syft.mod /app/base/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
+						OriginType: "builder",
+						Pullspec:   "localhost/trace-broad-base@sha256:dummy",
+						StageAlias: "builder",
+					},
+					{
+						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/trace-broad-base@sha256:dummy",
 						StageAlias: "builder",
 					},
 				},
@@ -1494,7 +1720,6 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Wildcard COPY] Intermediate content": {
-			SkipTestReason: "[Priority: high] includes() with wildcard /app* does not match intermediate paths like app1/go.mod",
 			TestImage: BuildDefinition{
 				Tag: "test-wildcard-copy-intermediate",
 				ContainerfileContent: `FROM localhost/wildcard-inter-base:latest AS builder
@@ -1532,7 +1757,6 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Wildcard COPY] Builder base and intermediate content": {
-			SkipTestReason: "[Priority: high] includes() with wildcard /app* does not match intermediate paths like app1/go.mod",
 			TestImage: BuildDefinition{
 				Tag: "test-wildcard-copy-both",
 				ContainerfileContent: `FROM localhost/wildcard-both-base:latest AS builder

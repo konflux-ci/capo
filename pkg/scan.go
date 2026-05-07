@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/konflux-ci/capo/internal/sbom"
@@ -274,26 +273,28 @@ func traceSource(
 	acc map[*containerfile.Stage][]string,
 	aliasToStage map[string]*containerfile.Stage,
 ) {
-	isDirectory := strings.HasSuffix(source, "/")
-	isWildcard := strings.ContainsAny(source, "*?[]")
+	coversMultipleFiles := strings.HasSuffix(source, "/") || strings.ContainsAny(source, "*?[]")
 
 	foundAncestor := false
 	for _, cp := range currStage.Copies {
-		matched, _ := filepath.Match(source, cp.Destination)
-		isDirectoryCopy := strings.HasPrefix(cp.Destination, source)
-		isSourceUnderDestination := strings.HasPrefix(source, cp.Destination)
-		if matched || isDirectoryCopy || isSourceUnderDestination {
+		sourceCoversDestination := isPathUnderPattern(source, cp.Destination)
+		destinationCoversSource := isPathUnderPattern(cp.Destination, source)
+		if sourceCoversDestination || destinationCoversSource {
 			foundAncestor = true
+			if sourceCoversDestination && source != cp.Destination {
+				coversMultipleFiles = true
+			}
 			for _, s := range cp.Sources {
 				traceSource(s, aliasToStage[cp.From], acc, aliasToStage)
 			}
 		}
 	}
 
-	// If the source is a directory or wildcard pattern, we want to add it to the accumulator
-	// even if we traced some of the sources. This is because the directory/pattern could
-	// contain mixed content - some from this stage, some copied from previous stages.
-	if isDirectory || isWildcard || !foundAncestor {
+	// If the source covers multiple files (directory, wildcard, or broader than
+	// a matched COPY destination), add it to the accumulator even if we traced
+	// some ancestors. The source could contain mixed content - some from this
+	// stage, some copied from previous stages.
+	if coversMultipleFiles || !foundAncestor {
 		acc[currStage] = append(acc[currStage], source)
 	}
 }
