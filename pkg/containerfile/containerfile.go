@@ -267,7 +267,7 @@ func isStageRef(ref string, stageNames []string) bool {
 // Only mounts with a "from" option are returned. Uses the passed previous stage
 // names to classify whether the mount references a builder stage or an external image.
 func parseMounts(node *parser.Node, env []string, stageNames []string) ([]Mount, error) {
-	var mounts []Mount
+	mounts := make([]Mount, 0)
 	for _, fl := range node.Flags {
 		if !strings.HasPrefix(fl, "--mount=") {
 			continue
@@ -303,6 +303,23 @@ func parseMounts(node *parser.Node, env []string, stageNames []string) ([]Mount,
 	return mounts, nil
 }
 
+func normalizeSources(sources []string) {
+	for i, s := range sources {
+		if !filepath.IsAbs(s) {
+			// In COPY --from, even if the source path looks relative,
+			// it is resolved from '/' workdir. To make the path resolution
+			// unambiguous we prepend it with the slash
+			s = "/" + s
+		}
+		isDir := strings.HasSuffix(s, "/")
+		s = filepath.Clean(s)
+		if isDir {
+			s += "/"
+		}
+		sources[i] = s
+	}
+}
+
 // parseCopy takes a raw dockerfile parser Node and optionally returns a pointer
 // to a parsed Copy struct.
 // Returns (nil, nil) if the COPY command is not builder-type, but copies from a context.
@@ -334,6 +351,7 @@ func parseCopy(node *parser.Node, workdir string, env []string, stageNames []str
 		}
 
 		sources := args[:len(args)-1]
+		normalizeSources(sources)
 
 		destination := args[len(args)-1]
 		// resolve relative paths
