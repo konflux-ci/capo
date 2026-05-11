@@ -809,11 +809,10 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		// traceSource walks COPY destinations in a builder stage to find where content
-		// originated. The old strings.HasPrefix check would cause /opt to match /optional.
-		// This test verifies that tracing /opt through a stage that also has /optional
-		// doesn't incorrectly pull in /optional's content.
-		"[traceSource] Prefix collision during content tracing across stages": {
+		// Capo walks COPY destinations in a builder stage to find where content
+		// originated. It also has to handle prefix collisions in this case
+		// (/opt and /optional)
+		"[trace source] Prefix collision during content tracing across stages": {
 			TestImage: BuildDefinition{
 				Tag: "test-trace-prefix-collision",
 				ContainerfileContent: `FROM localhost/trace-prefix-provider:latest AS provider
@@ -854,9 +853,9 @@ func TestIntegration(t *testing.T) {
 		},
 		// When the final stage copies a directory from a builder, and that directory
 		// contains mixed content (some files copied from a previous stage, plus builder
-		// base content), traceSource must add the source to the accumulator for this
+		// base content), Capo must add the source to the accumulator for this
 		// stage too, not just trace through to the previous stage.
-		"[traceSource] Directory source broader than traced COPY destinations": {
+		"[trace source] Directory source broader than traced COPY destinations": {
 			TestImage: BuildDefinition{
 				Tag: "test-trace-broad-source",
 				ContainerfileContent: `FROM localhost/trace-broad-base:latest AS builder
