@@ -282,6 +282,7 @@ func traceSource(
 		if sourceCoversDestination || destinationCoversSource {
 			foundAncestor = true
 			if sourceCoversDestination && source != cp.Destination {
+				// source covers destination but is not the same path, so it covers multiple files
 				coversMultipleFiles = true
 			}
 			for _, s := range cp.Sources {
