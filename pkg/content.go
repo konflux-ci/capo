@@ -75,12 +75,15 @@ func getContent(
 	return nil
 }
 
-
 // IsPathUnderPattern reports whether path matches pattern exactly (via filepath.Match)
 // or is a descendant of a directory matching pattern.
 func isPathUnderPattern(pattern, path string) bool {
-    pattern = filepath.Clean(pattern)
+	pattern = filepath.Clean(pattern)
 	path = filepath.Clean(path)
+
+	if pattern == "/" {
+		return true
+	}
 
 	if matched, _ := filepath.Match(pattern, path); matched {
 		return true

@@ -188,6 +188,22 @@ func TestIncludes(t *testing.T) {
 			path:    "/foo/./bar/file.txt",
 			want:    true,
 		},
+		// Root source
+		"root source matches any path": {
+			sources: []string{"/"},
+			path:    "/etc/passwd",
+			want:    true,
+		},
+		"root source wildcard matches any path": {
+			sources: []string{"/*"},
+			path:    "/etc/passwd",
+			want:    true,
+		},
+		"root source matches deeply nested path": {
+			sources: []string{"/"},
+			path:    "/opt/app/sub/go.mod",
+			want:    true,
+		},
 	}
 
 	for name, tc := range tests {
@@ -200,7 +216,6 @@ func TestIncludes(t *testing.T) {
 		})
 	}
 }
-
 
 func TestCheckBuildahVersionFromImage(t *testing.T) {
 	t.Parallel()
