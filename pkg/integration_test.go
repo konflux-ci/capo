@@ -664,129 +664,15 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		"[Path normalization] Relative source path in COPY --from": {
+		"[Path normalization] Malformed and dot-dot paths in COPY --from": {
 			TestImage: BuildDefinition{
-				Tag: "test-path-relative-source",
+				Tag: "test-path-normalization",
 				ContainerfileContent: `FROM localhost/pathnorm-base:latest AS builder
-										COPY go_uuid.mod /opt/go.mod
+										COPY go_uuid.mod //opt/go.mod
+										COPY go_exp.mod /content/go.mod
 
 										FROM scratch
-										COPY --from=builder opt/go.mod /opt/go.mod`,
-				ContextDirectory: "../testdata/image_content",
-			},
-			BuilderImages: []BuildDefinition{
-				{
-					Tag: "localhost/pathnorm-base:latest",
-					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-			},
-			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/pathnorm-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
-			},
-		},
-		"[Path normalization] Double slashes in COPY --from source": {
-			TestImage: BuildDefinition{
-				Tag: "test-path-double-slashes",
-				ContainerfileContent: `FROM localhost/pathnorm-base:latest AS builder
-										COPY go_uuid.mod /opt/go.mod
-
-										FROM scratch
-										COPY --from=builder //opt//go.mod /opt/go.mod`,
-				ContextDirectory: "../testdata/image_content",
-			},
-			BuilderImages: []BuildDefinition{
-				{
-					Tag: "localhost/pathnorm-base:latest",
-					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-			},
-			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/pathnorm-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
-			},
-		},
-		"[Path normalization] Dot-dot segments in COPY --from source": {
-			TestImage: BuildDefinition{
-				Tag: "test-path-dotdot",
-				ContainerfileContent: `FROM localhost/pathnorm-base:latest AS builder
-										COPY go_uuid.mod /opt/go.mod
-
-										FROM scratch
-										COPY --from=builder /opt/../opt/go.mod /opt/go.mod`,
-				ContextDirectory: "../testdata/image_content",
-			},
-			BuilderImages: []BuildDefinition{
-				{
-					Tag: "localhost/pathnorm-base:latest",
-					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-			},
-			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/pathnorm-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
-			},
-		},
-		"[Path normalization] Dot segments in COPY --from source": {
-			TestImage: BuildDefinition{
-				Tag: "test-path-dot",
-				ContainerfileContent: `FROM localhost/pathnorm-base:latest AS builder
-										COPY go_uuid.mod /opt/go.mod
-
-										FROM scratch
-										COPY --from=builder /opt/./go.mod /opt/go.mod`,
-				ContextDirectory: "../testdata/image_content",
-			},
-			BuilderImages: []BuildDefinition{
-				{
-					Tag: "localhost/pathnorm-base:latest",
-					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-			},
-			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/pathnorm-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
-			},
-		},
-		"[Path normalization] Directory copy with dot-dot and trailing slash": {
-			TestImage: BuildDefinition{
-				Tag: "test-path-dir-dotdot",
-				ContainerfileContent: `FROM localhost/pathnorm-base:latest AS builder
-										COPY go_uuid.mod /content/go.mod
-
-										FROM scratch
+										COPY --from=builder etc/../opt/.//go.mod /opt/go.mod
 										COPY --from=builder /foo/../content/ /content/`,
 				ContextDirectory: "../testdata/image_content",
 			},
@@ -794,12 +680,18 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/pathnorm-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod`,
+											COPY go_text.mod /base/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
 				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/pathnorm-base@sha256:dummy",
+						StageAlias: "builder",
+					},
 					{
 						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
 						OriginType: "intermediate",

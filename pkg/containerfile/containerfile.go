@@ -303,21 +303,25 @@ func parseMounts(node *parser.Node, env []string, stageNames []string) ([]Mount,
 	return mounts, nil
 }
 
-func normalizeSources(sources []string) {
-	for i, s := range sources {
+// normalizeSources normalizes the paths in the passed sources slice to absolute clean paths.
+// It also preserves trailing slash to directory paths.
+func normalizeSources(sources []string) []string {
+	normalizedPaths := make([]string, 0, len(sources))
+	for _, s := range sources {
+		isDir := strings.HasSuffix(s, "/")
 		if !filepath.IsAbs(s) {
 			// In COPY --from, even if the source path looks relative,
 			// it is resolved from '/' workdir. To make the path resolution
 			// unambiguous we prepend it with the slash
-			s = "/" + s
+			s = filepath.Join("/", s)
 		}
-		isDir := strings.HasSuffix(s, "/")
 		s = filepath.Clean(s)
 		if isDir {
 			s += "/"
 		}
-		sources[i] = s
+		normalizedPaths = append(normalizedPaths, s)
 	}
+	return normalizedPaths
 }
 
 // parseCopy takes a raw dockerfile parser Node and optionally returns a pointer
@@ -351,7 +355,7 @@ func parseCopy(node *parser.Node, workdir string, env []string, stageNames []str
 		}
 
 		sources := args[:len(args)-1]
-		normalizeSources(sources)
+		sources = normalizeSources(sources)
 
 		destination := args[len(args)-1]
 		// resolve relative paths
