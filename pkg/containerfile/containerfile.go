@@ -309,13 +309,10 @@ func normalizeSources(sources []string) []string {
 	normalizedPaths := make([]string, 0, len(sources))
 	for _, s := range sources {
 		isDir := strings.HasSuffix(s, "/")
-		if !filepath.IsAbs(s) {
-			// In COPY --from, even if the source path looks relative,
-			// it is resolved from '/' workdir. To make the path resolution
-			// unambiguous we prepend it with the slash
-			s = filepath.Join("/", s)
-		}
-		s = filepath.Clean(s)
+		// In COPY --from, even if the source path looks relative,
+		// it is resolved from '/' workdir. To make the path resolution
+		// unambiguous we prepend it with the slash. Join also cleans the path.
+		s = filepath.Join("/", s)
 		if isDir {
 			s += "/"
 		}
