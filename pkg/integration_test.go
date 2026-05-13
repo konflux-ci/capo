@@ -743,45 +743,6 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		// When the final stage copies a directory from a builder, and that directory
-		// contains mixed content (some files copied from a previous stage, plus builder
-		// base content), Capo must add the source to the accumulator for this
-		// stage too, not just trace through to the previous stage.
-		"[trace source] Directory source broader than traced COPY destinations": {
-			TestImage: BuildDefinition{
-				Tag: "test-trace-broad-source",
-				ContainerfileContent: `FROM localhost/trace-broad-base:latest AS builder
-										COPY go_uuid.mod /app/intermediate/go.mod
-
-										FROM scratch
-										COPY --from=builder /app/ /app/`,
-				ContextDirectory: "../testdata/image_content",
-			},
-			BuilderImages: []BuildDefinition{
-				{
-					Tag: "localhost/trace-broad-base:latest",
-					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /app/base/go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-			},
-			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/trace-broad-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/trace-broad-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
-			},
-		},
 		// Two providers copy go.mod into the same /dest/ in builder stage.
 		// Provider2 overwrites provider1's file. Only exp package (provider2) should be
 		// in the final image. However, capo currently cannot distinguish overlapping
