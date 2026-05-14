@@ -11,7 +11,8 @@ import (
 	"strings"
 
 	"github.com/konflux-ci/capo/pkg/containerfile"
-	"github.com/konflux-ci/capo/pkg/imagestore"
+	"github.com/konflux-ci/capo/pkg/storageclient"
+	"github.com/opencontainers/go-digest"
 )
 
 // Image represents a container image identified by its pullspec and,
@@ -51,19 +52,19 @@ var ErrParseContainerfile = errors.New("could not parse containerfile")
 var ErrDigestResolve = errors.New("failed to resolve digest of image")
 
 // Probe parses the Containerfile described in opts and collects build metadata.
-// When repo is non-nil, image digests are resolved through the image store.
-func Probe(opts ProbeOpts, store imagestore.ImageStore) (BuildMetadata, error) {
+// When client is non-nil, image digests are resolved through the storage client.
+func Probe(opts ProbeOpts, client storageclient.Client) (BuildMetadata, error) {
 	meta := BuildMetadata{}
 
 	meta.Image.Pullspec = opts.Tag
 
-	if store != nil {
-		digest, err := store.ResolveDigest(opts.Tag)
+	if client != nil {
+		digest, err := client.ResolveDigest(opts.Tag)
 		if err != nil {
 			return meta, fmt.Errorf("%w %q: %w", ErrDigestResolve, opts.Tag, err)
 		}
 
-		meta.Image.Digest = digest
+		meta.Image.Digest = digest.String()
 	}
 
 	stages, err := containerfile.Parse(
@@ -79,14 +80,14 @@ func Probe(opts ProbeOpts, store imagestore.ImageStore) (BuildMetadata, error) {
 
 	reachable := reachableStages(stages)
 
-	baseImages, err := resolveBaseImages(store, reachable)
+	baseImages, err := resolveBaseImages(client, reachable)
 	if err != nil {
 		return meta, err
 	}
 
 	meta.BaseImages = baseImages
 
-	extraImages, err := resolveExtraImages(store, reachable)
+	extraImages, err := resolveExtraImages(client, reachable)
 	if err != nil {
 		return meta, err
 	}
@@ -174,7 +175,7 @@ func stageRefs(stage containerfile.Stage) []string {
 	return refs
 }
 
-func resolveBaseImages(store imagestore.ImageStore, stages []containerfile.Stage) ([]Image, error) {
+func resolveBaseImages(client storageclient.Client, stages []containerfile.Stage) ([]Image, error) {
 	res := make([]Image, 0)
 	seen := make(map[string]bool)
 
@@ -188,25 +189,25 @@ func resolveBaseImages(store imagestore.ImageStore, stages []containerfile.Stage
 		}
 		seen[stage.Base] = true
 
-		digest := ""
+		var digest digest.Digest = ""
 		var err error
 
-		if store != nil {
-			digest, err = store.ResolveDigest(stage.Base)
+		if client != nil {
+			digest, err = client.ResolveDigest(stage.Base)
 			if err != nil {
 				return nil, fmt.Errorf("%w %q: %w", ErrDigestResolve, stage.Base, err)
 			}
 		}
 		res = append(res, Image{
 			Pullspec: stage.Base,
-			Digest:   digest,
+			Digest:   digest.String(),
 		})
 	}
 
 	return res, nil
 }
 
-func resolveExtraImages(store imagestore.ImageStore, stages []containerfile.Stage) ([]Image, error) {
+func resolveExtraImages(client storageclient.Client, stages []containerfile.Stage) ([]Image, error) {
 	res := make([]Image, 0)
 	seen := make(map[string]bool)
 
@@ -216,11 +217,11 @@ func resolveExtraImages(store imagestore.ImageStore, stages []containerfile.Stag
 		}
 		seen[pullspec] = true
 
-		digest := ""
+		var digest digest.Digest = ""
 		var err error
 
-		if store != nil {
-			digest, err = store.ResolveDigest(pullspec)
+		if client != nil {
+			digest, err = client.ResolveDigest(pullspec)
 			if err != nil {
 				return fmt.Errorf("%w %q: %w", ErrDigestResolve, pullspec, err)
 			}
@@ -228,7 +229,7 @@ func resolveExtraImages(store imagestore.ImageStore, stages []containerfile.Stag
 
 		res = append(res, Image{
 			Pullspec: pullspec,
-			Digest:   digest,
+			Digest:   digest.String(),
 		})
 		return nil
 	}

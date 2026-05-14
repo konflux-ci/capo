@@ -3,7 +3,6 @@
 package containerfile
 
 import (
-	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -50,36 +49,6 @@ func TestParseBuiltinArgs(t *testing.T) {
 
 	if diff := cmp.Diff(expected, actual); diff != "" {
 		t.Errorf("Parse() result mismatch (-want +got):\n%s", diff)
-	}
-}
-
-// Test that parsing containerfiles with relative paths fails when attempting
-// to use ambiguous relative paths.
-func TestParseInvalidRelativePaths(t *testing.T) {
-	t.Parallel()
-	tests := map[string]struct {
-		containerfile string
-	}{
-		"relative WORKDIR": {
-			containerfile: `FROM scratch
-							WORKDIR app/`,
-		},
-		"relative COPY destination without WORKDIR": {
-			containerfile: `FROM docker.io/library/helm:latest AS builder
-							FROM scratch
-							COPY --from=builder /usr/bin/helm helm`,
-		},
-	}
-
-	for name, test := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			reader := strings.NewReader(test.containerfile)
-			_, err := Parse(reader, BuildOptions{})
-			if !errors.Is(err, ErrAmbiguousRelativePath) {
-				t.Fatalf("Parse didn't return WorkdirError when expected, actual: %v", err)
-			}
-		})
 	}
 }
 
@@ -235,15 +204,16 @@ func TestParse(t *testing.T) {
 				},
 			},
 		},
-		"relative path resolution": {
+		"relative paths with workdir switching": {
 			containerfile: `FROM docker.io/alpine/helm:latest AS builder
 							FROM scratch
-							WORKDIR /usr/bin/
 							COPY --from=builder /usr/bin/rustc rustcompiler
 							COPY --from=builder /usr/bin/mono ../app/
+							WORKDIR /bin/
 							COPY --from=builder /usr/bin/go ./go
 							COPY --from=builder /usr/bin/helm app/
 							COPY --from=builder /usr/bin/syft ..
+							WORKDIR /usr/bin/
 							COPY --from=builder /usr/bin/capo ../..
 							COPY --from=builder /usr/bin/oras .`,
 			expected: []Stage{
@@ -260,44 +230,51 @@ func TestParse(t *testing.T) {
 						{
 							From:        "builder",
 							Sources:     []string{"/usr/bin/rustc"},
-							Destination: "/usr/bin/rustcompiler",
+							Destination: "rustcompiler",
 							Type:        CopyTypeBuilder,
+							Workdir:	 "",
 						},
 						{
 							From:        "builder",
 							Sources:     []string{"/usr/bin/mono"},
-							Destination: "/usr/app/",
+							Destination: "../app/",
 							Type:        CopyTypeBuilder,
+							Workdir:	 "",
 						},
 						{
 							From:        "builder",
 							Sources:     []string{"/usr/bin/go"},
-							Destination: "/usr/bin/go",
+							Destination: "./go",
 							Type:        CopyTypeBuilder,
+							Workdir:	 "/bin/",
 						},
 						{
 							From:        "builder",
 							Sources:     []string{"/usr/bin/helm"},
-							Destination: "/usr/bin/app/",
+							Destination: "app/",
 							Type:        CopyTypeBuilder,
+							Workdir:	 "/bin/",
 						},
 						{
 							From:        "builder",
 							Sources:     []string{"/usr/bin/syft"},
-							Destination: "/usr/",
+							Destination: "..",
 							Type:        CopyTypeBuilder,
+							Workdir:	 "/bin/",
 						},
 						{
 							From:        "builder",
 							Sources:     []string{"/usr/bin/capo"},
-							Destination: "/",
+							Destination: "../..",
 							Type:        CopyTypeBuilder,
+							Workdir:	 "/usr/bin/",
 						},
 						{
 							From:        "builder",
 							Sources:     []string{"/usr/bin/oras"},
-							Destination: "/usr/bin/",
+							Destination: ".",
 							Type:        CopyTypeBuilder,
+							Workdir:	 "/usr/bin/",
 						},
 					},
 					Mounts: []Mount{},

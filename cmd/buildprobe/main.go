@@ -9,8 +9,8 @@ import (
 	"runtime/debug"
 
 	"github.com/konflux-ci/capo/pkg/buildargs"
-	"github.com/konflux-ci/capo/pkg/imagestore"
 	"github.com/konflux-ci/capo/pkg/probe"
+	"github.com/konflux-ci/capo/pkg/storageclient"
 	"go.yaml.in/yaml/v3"
 )
 
@@ -135,9 +135,9 @@ func main() {
 		}
 	}()
 
-	repo, err := imagestore.NewBuildahStore()
+	client, err := storageclient.DefaultBuildahClient()
 	if err != nil {
-		log.Fatalf("Could not create buildah image store: %s", err)
+		log.Fatalf("Could not create storage client: %s", err)
 	}
 
 	meta, err := probe.Probe(probe.ProbeOpts{
@@ -145,7 +145,7 @@ func main() {
 		Target:        args.target,
 		Tag:           args.tag,
 		Args:          args.buildArgs,
-	}, repo)
+	}, client)
 	if err != nil {
 		log.Fatalf("Failed to probe build metadata %+v", err)
 	}
