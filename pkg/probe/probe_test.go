@@ -7,15 +7,11 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/opencontainers/go-digest"
+
+	"github.com/konflux-ci/capo/pkg/storageclient"
 )
 
-type TestStore struct {
-	digests map[string]string
-}
-
-func (store TestStore) ResolveDigest(pullspec string) (string, error) {
-	return store.digests[pullspec], nil
-}
 
 func TestProbe(t *testing.T) {
 	t.Parallel()
@@ -23,7 +19,7 @@ func TestProbe(t *testing.T) {
 	tests := map[string]struct {
 		containerfile string
 		opts          ProbeOpts
-		digests       map[string]string
+		digests       map[string]digest.Digest
 		expected      BuildMetadata
 	}{
 		"simple": {
@@ -37,7 +33,7 @@ func TestProbe(t *testing.T) {
 				Target: "",
 				Args:   make(map[string]string),
 			},
-			digests: map[string]string{
+			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":    "fedoradigest",
 				"quay.io/image:latest": "imagedigest",
@@ -68,7 +64,7 @@ func TestProbe(t *testing.T) {
 				Target: "",
 				Args:   make(map[string]string),
 			},
-			digests: map[string]string{
+			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/tools:1":      "toolsdigest",
 				"quay.io/image:latest": "imagedigest",
@@ -97,7 +93,7 @@ func TestProbe(t *testing.T) {
 				Target: "",
 				Args:   make(map[string]string),
 			},
-			digests: map[string]string{
+			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":    "fedoradigest",
 				"quay.io/image:latest": "imagedigest",
@@ -127,7 +123,7 @@ func TestProbe(t *testing.T) {
 				Target: "",
 				Args:   make(map[string]string),
 			},
-			digests: map[string]string{
+			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/tools:1":      "toolsdigest",
 				"quay.io/utils:2":      "utilsdigest",
@@ -156,7 +152,7 @@ func TestProbe(t *testing.T) {
 				Target: "",
 				Args:   make(map[string]string),
 			},
-			digests: map[string]string{
+			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/image:latest": "imagedigest",
 			},
@@ -180,7 +176,7 @@ func TestProbe(t *testing.T) {
 				Target: "",
 				Args:   make(map[string]string),
 			},
-			digests: map[string]string{
+			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/image:latest": "imagedigest",
 			},
@@ -203,7 +199,7 @@ func TestProbe(t *testing.T) {
 				Target: "",
 				Args:   make(map[string]string),
 			},
-			digests: map[string]string{
+			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/tools:1":      "toolsdigest",
 				"quay.io/image:latest": "imagedigest",
@@ -230,7 +226,7 @@ func TestProbe(t *testing.T) {
 				Target: "",
 				Args:   make(map[string]string),
 			},
-			digests: map[string]string{
+			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":    "fedoradigest",
 				"quay.io/image:latest": "imagedigest",
@@ -258,7 +254,7 @@ func TestProbe(t *testing.T) {
 				Target: "",
 				Args:   make(map[string]string),
 			},
-			digests: map[string]string{
+			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":    "fedoradigest",
 				"quay.io/image:latest": "imagedigest",
@@ -289,7 +285,7 @@ func TestProbe(t *testing.T) {
 				Target: "",
 				Args:   make(map[string]string),
 			},
-			digests: map[string]string{
+			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":    "fedoradigest",
 				"quay.io/image:latest": "imagedigest",
@@ -318,7 +314,7 @@ func TestProbe(t *testing.T) {
 				Target: "",
 				Args:   make(map[string]string),
 			},
-			digests: map[string]string{
+			digests: map[string]digest.Digest{
 				"quay.io/alpine:3":     "alpinedigest",
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":    "fedoradigest",
@@ -348,7 +344,7 @@ func TestProbe(t *testing.T) {
 				Target: "builder",
 				Args:   make(map[string]string),
 			},
-			digests: map[string]string{
+			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/image:latest": "imagedigest",
 			},
@@ -369,13 +365,13 @@ func TestProbe(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			repo := TestStore{
-				digests: test.digests,
-			}
+			client := storageclient.NewMockClient(
+				test.digests, make(map[string]storageclient.OCIImageConfig),
+			)
 
 			test.opts.Containerfile = strings.NewReader(test.containerfile)
 
-			actual, err := Probe(test.opts, repo)
+			actual, err := Probe(test.opts, client)
 			if err != nil {
 				t.Fatalf("Probe returned unexpected error: %v", err)
 			}

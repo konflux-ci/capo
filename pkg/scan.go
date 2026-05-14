@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/konflux-ci/capo/internal/sbom"
 	"github.com/konflux-ci/capo/pkg/containerfile"
+	"github.com/konflux-ci/capo/pkg/storageclient"
 
 	"go.podman.io/image/v5/docker/reference"
 	"go.podman.io/storage"
@@ -60,6 +62,7 @@ type PackageMetadataItem struct {
 
 var ErrStorageSetup = errors.New("error while setting up buildah storage")
 var ErrPullspecResolve = errors.New("failed to resolve pullspec")
+var ErrOCIConfig = errors.New("failed to get OCIImageConfig")
 
 func SetupStore() (storage.Store, error) {
 	// The containers/storage library requires this to run for some operations
@@ -96,12 +99,20 @@ func Scan(
 		return PackageMetadata{}, err
 	}
 
-	resolvedPullspecs, err := resolvePullspecs(store, stages)
+	// Tech debt: in this function, we use both the storageclient (for
+	// resolving pullspecs and fetching OCIImageConfigs) that uses
+	// storage.Store internallyy and the raw storage.Store struct. This was
+	// done for ease of testing some features via a mock client. Ideally we
+	// would only have the storageclient implementation, so we had full control
+	// over unit testing.
+	storageClient := storageclient.NewBuildahClient(store)
+
+	resolvedPullspecs, err := resolvePullspecs(storageClient, stages)
 	if err != nil {
 		return PackageMetadata{}, err
 	}
 
-	pkgSources, err := getPackageSources(stages, resolvedPullspecs)
+	pkgSources, err := getPackageSources(storageClient, stages, resolvedPullspecs)
 	if err != nil {
 		return PackageMetadata{}, err
 	}
@@ -120,12 +131,12 @@ func Scan(
 // resolvePullspecs uses the containers store to create a mapping between pullspecs
 // used in the containerfile and pullspecs with resolved digest instead of tags.
 // Resolved pullspecs in base images of stages and --from flags in copies within stages.
-func resolvePullspecs(store storage.Store, stages []containerfile.Stage) (map[string]string, error) {
+func resolvePullspecs(storageClient storageclient.Client, stages []containerfile.Stage) (map[string]string, error) {
 	res := make(map[string]string)
 
 	for _, stage := range stages[:len(stages)-1] {
 		if _, ok := res[stage.Base]; !ok {
-			resolved, err := resolvePullspec(store, stage.Base)
+			resolved, err := resolvePullspec(storageClient, stage.Base)
 			if err != nil {
 				return nil, err
 			}
@@ -141,7 +152,7 @@ func resolvePullspecs(store storage.Store, stages []containerfile.Stage) (map[st
 			}
 
 			if _, ok := res[cp.From]; !ok {
-				resolved, err := resolvePullspec(store, cp.From)
+				resolved, err := resolvePullspec(storageClient, cp.From)
 				if err != nil {
 					return nil, err
 				}
@@ -156,13 +167,8 @@ func resolvePullspecs(store storage.Store, stages []containerfile.Stage) (map[st
 
 // resolvePullspec uses the passed containers store to resolve a pullspec from a containerfile
 // into a pullspec with digest without tag.
-func resolvePullspec(store storage.Store, pullspec string) (string, error) {
-	id, err := store.Lookup(pullspec)
-	if err != nil {
-		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
-	}
-
-	img, err := store.Image(id)
+func resolvePullspec(storageClient storageclient.Client, pullspec string) (string, error) {
+	digest, err := storageClient.ResolveDigest(pullspec)
 	if err != nil {
 		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
 	}
@@ -172,8 +178,8 @@ func resolvePullspec(store storage.Store, pullspec string) (string, error) {
 		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
 	}
 
-	// remove tags if present add the digest
-	final, err := reference.WithDigest(reference.TrimNamed(ref), img.Digest)
+	// remove tags if present and add the digest
+	final, err := reference.WithDigest(reference.TrimNamed(ref), digest)
 	if err != nil {
 		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
 	}
@@ -181,9 +187,13 @@ func resolvePullspec(store storage.Store, pullspec string) (string, error) {
 	return final.String(), nil
 }
 
-// getPackageSources uses the passed containerfile stages and returns a slice of
-// packageSource structs, specifying which COPY-ied content originates from which builder stage.
+// getPackageSources uses the passed containerfile stages and returns a slice
+// of packageSource structs, specifying which COPY-ied content originates from
+// which builder stage. Uses the passed storageclient.Client to get
+// OCIImageConfigs of base images to get their default workdirs for relative
+// path resolution in copy destinations.
 func getPackageSources(
+	storageClient storageclient.Client,
 	stages []containerfile.Stage,
 	resolvedPullspecs map[string]string,
 ) ([]packageSource, error) {
@@ -197,23 +207,41 @@ func getPackageSources(
 		aliasToStage[st.Alias] = st
 	}
 
+	// mapping of bases used in the containerfile to their initial working
+	// directories
+	baseToWorkdir := make(map[string]string)
+	for _, s := range stages {
+		if s.Base == "scratch" || s.Base == "oci:archive" {
+			continue
+		}
+
+		cfg, err := storageClient.GetImageConfig(s.Base)
+		if err != nil {
+			return []packageSource{}, fmt.Errorf("%w for %q", ErrOCIConfig, s.Base)
+		}
+
+		baseToWorkdir[s.Base] = cfg.Config.Workdir
+	}
+
 	// The following code block reads all the builder COPY-ies in the final stage
 	// and recursively traces their content to their respective origins in previous stages.
 	// Builds a map between references to containerfile stages and the sources used in the COPY.
 	final := &stages[len(stages)-1]
 	stageToSources := make(map[*containerfile.Stage][]string)
+
 	for _, cp := range final.Copies {
 		for _, source := range cp.Sources {
 			// the copy is builder type only if there's no builder stage with alias equal to the cp.from
 			// otherwise the cp.from is a pullspec and it is an external copy
 			if _, isBuilder := aliasToStage[cp.From]; isBuilder {
-				traceSource(source, aliasToStage[cp.From], stageToSources, aliasToStage)
+				traceSource(source, aliasToStage[cp.From], stageToSources, aliasToStage, baseToWorkdir)
 			} else {
 				external := containerfile.Stage{
 					Alias:  "",
 					Base:   cp.From,
 					Copies: []containerfile.Copy{},
 				}
+
 				stageToSources[&external] = append(stageToSources[&external], source)
 			}
 		}
@@ -267,26 +295,37 @@ func getPackageSources(
 // to the source paths that originated in them.
 // aliasToStage is a mapping of stage aliases to stage pointers to use for lookups
 // when resolving COPY commands.
+// baseToWorkdir is a mapping of bases of stages in the containerfile and their
+// respective initial working directories.
 func traceSource(
 	source string,
 	currStage *containerfile.Stage,
 	acc map[*containerfile.Stage][]string,
 	aliasToStage map[string]*containerfile.Stage,
+	baseToWorkdir map[string]string,
 ) {
 	coversMultipleFiles := strings.HasSuffix(source, "/") || strings.ContainsAny(source, "*?[]")
-
+	baseWorkdir := baseToWorkdir[currStage.Base]
 	foundAncestor := false
 	for _, cp := range currStage.Copies {
-		sourceCoversDestination := isPathUnderPattern(source, cp.Destination)
-		destinationCoversSource := isPathUnderPattern(cp.Destination, source)
+		dest := cp.Destination
+		if !filepath.IsAbs(cp.Destination) {
+			if cp.Workdir != "" {
+				dest = filepath.Join(cp.Workdir, cp.Destination)
+			} else {
+				dest = filepath.Join(baseWorkdir, cp.Destination)
+			}
+		}
+		sourceCoversDestination := isPathUnderPattern(source, dest)
+		destinationCoversSource := isPathUnderPattern(dest, source)
 		if sourceCoversDestination || destinationCoversSource {
 			foundAncestor = true
-			if sourceCoversDestination && source != cp.Destination {
+			if sourceCoversDestination && source != dest {
 				// source covers destination but is not the same path, so it covers multiple files
 				coversMultipleFiles = true
 			}
 			for _, s := range cp.Sources {
-				traceSource(s, aliasToStage[cp.From], acc, aliasToStage)
+				traceSource(s, aliasToStage[cp.From], acc, aliasToStage, baseToWorkdir)
 			}
 		}
 	}

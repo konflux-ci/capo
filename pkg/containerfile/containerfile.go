@@ -43,6 +43,12 @@ type Copy struct {
 	// Type of the COPY. Specifies whether it is a copy from a builder stage
 	// or an external image directly.
 	Type CopyType
+
+	// Current working directory for resolving relative paths in this COPY
+	// command.
+	// Is empty if the containerfile does not explicitly set a working
+	// directory before the COPY command.
+	Workdir string
 }
 
 // A mount reference from a RUN --mount instruction in a Containerfile stage.
@@ -67,13 +73,13 @@ const (
 
 // A builder or final stage in a Containerfile
 type Stage struct {
-	// Alias of the builder stage or equal to FinalStage if final
+	// Alias of the builder stage or equal to FinalStage if final.
 	Alias string
 	// Base image for the stage. Can be a pullspec, "scratch", or "oci:archive".
 	Base string
-	// Builder copies in this stage
+	// Builder copies in this stage in order (top to bottom in the containerfile).
 	Copies []Copy
-	// Mount references in this stage
+	// Mount references in this stage.
 	Mounts []Mount
 }
 
@@ -88,10 +94,6 @@ type BuildOptions struct {
 // ErrTargetNotFound is returned when the target stage specified in
 // BuildOptions does not exist in the Containerfile.
 var ErrTargetNotFound = errors.New("specified target stage was not found in the containerfile")
-
-// ErrAmbiguousRelativePath is returned when a COPY destination or WORKDIR uses
-// a relative path but no prior WORKDIR has been set in that stage.
-var ErrAmbiguousRelativePath = errors.New("relative path in containerfile is ambiguous")
 
 // ErrParse is returned when the Containerfile cannot be parsed.
 var ErrParse = errors.New("error while parsing containerfile")
@@ -216,18 +218,7 @@ func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount,
 	for _, child := range s.Node.Children {
 		switch child.Value {
 		case "workdir":
-			dirPath := child.Next.Value
-			if filepath.IsAbs(dirPath) {
-				workdir = dirPath
-			} else {
-				// if the path is relative, it is relative to the last set workdir
-				// so we need to fail if a WORKDIR command was not yet specified
-				if workdir == "" {
-					return copies, mounts, fmt.Errorf("%w: %q", ErrAmbiguousRelativePath, child.Original)
-				}
-
-				workdir = filepath.Join(workdir, dirPath)
-			}
+			workdir = child.Next.Value
 
 		case "copy":
 			cp, err := parseCopy(child, workdir, env, stageNames)
@@ -324,7 +315,7 @@ func normalizeSources(sources []string) []string {
 // parseCopy takes a raw dockerfile parser Node and optionally returns a pointer
 // to a parsed Copy struct.
 // Returns (nil, nil) if the COPY command is not builder-type, but copies from a context.
-// Uses the passed workdir to resolve relative paths in the COPY's destination to absolute.
+// Sets the workdir of the Copy to the passed workdir.
 // Uses the passed env to evaluate arguments in the COPY.
 // Uses the passed previous stage names to evaluate whether this COPY command is from
 // a builder stage or directly from an external image.
@@ -355,26 +346,6 @@ func parseCopy(node *parser.Node, workdir string, env []string, stageNames []str
 		sources = normalizeSources(sources)
 
 		destination := args[len(args)-1]
-		// resolve relative paths
-		if !filepath.IsAbs(destination) {
-			if workdir == "" {
-				return nil, fmt.Errorf("%w: %q", ErrAmbiguousRelativePath, node.Original)
-
-			}
-
-			_, destFile := filepath.Split(destination)
-			destIsDir := destFile == "" || destFile == ".." || destFile == "."
-			if destIsDir {
-				destination = filepath.Join(workdir, destination)
-
-				// special case: only add trailing slash if not already in root
-				if destination != "/" {
-					destination = destination + "/"
-				}
-			} else {
-				destination = filepath.Join(workdir, destination)
-			}
-		}
 
 		cpType := CopyTypeBuilder
 		if !isStageRef(from, stageNames) {
@@ -386,6 +357,7 @@ func parseCopy(node *parser.Node, workdir string, env []string, stageNames []str
 			Sources:     sources,
 			Destination: destination,
 			Type:        cpType,
+			Workdir:     workdir,
 		}, nil
 	}
 

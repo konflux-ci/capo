@@ -3,7 +3,9 @@
 package capo
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -155,7 +157,11 @@ func (buildDef *BuildDefinition) buildImage(store storage.Store, buildahBinary s
 	}
 	args = append(args, buildDef.ContextDirectory)
 
-	return sh.RunV(buildahBinary, args...)
+	var buf bytes.Buffer
+	if _, err := sh.Exec(nil, &buf, &buf, buildahBinary, args...); err != nil {
+		return fmt.Errorf("buildah build failed:\n%s%w", buf.String(), err)
+	}
+	return nil
 }
 
 func normalizePullspec(pullspec string) string {
