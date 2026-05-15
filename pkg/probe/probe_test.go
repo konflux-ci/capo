@@ -10,6 +10,7 @@ import (
 	"github.com/opencontainers/go-digest"
 
 	"github.com/konflux-ci/capo/pkg/storageclient"
+	"github.com/konflux-ci/capo/internal/testutils"
 )
 
 
@@ -365,7 +366,7 @@ func TestProbe(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			client := storageclient.NewMockClient(
+			client := testutils.NewTStorageClient(
 				test.digests, make(map[string]storageclient.OCIImageConfig),
 			)
 

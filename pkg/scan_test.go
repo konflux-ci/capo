@@ -12,6 +12,8 @@ import (
 
 	"github.com/konflux-ci/capo/pkg/containerfile"
 	"github.com/konflux-ci/capo/pkg/storageclient"
+
+	"github.com/konflux-ci/capo/internal/testutils"
 )
 
 func configWithWorkdir(workdir string) storageclient.OCIImageConfig {
@@ -920,7 +922,7 @@ func TestGetPackageSourcesError(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			mockClient := storageclient.NewMockClient(map[string]digest.Digest{}, test.configs)
+			mockClient := testutils.NewTStorageClient(map[string]digest.Digest{}, test.configs)
 
 			_, err := getPackageSources(mockClient, test.stages, test.resolvedPullspecs)
 			if err == nil {
