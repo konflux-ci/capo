@@ -195,14 +195,6 @@ func resolvePullspecs(stages []imagebuilder.Stage) ([]string, error) {
 // A Mount is extracted from RUN --mount instructions that specify a "from" option.
 // Uses the passed previous stageNames to specify whether references are to a stage
 // or directly to an image.
-//
-// WORKDIR commands are taken into account and the destinations of COPY commands
-// are resolved to be absolute instead of relative, where needed. If the Containerfile
-// contains builder-type COPY commands that copy to a relative destination and don't
-// specify the WORKDIR in advance, parseStageRefs returns a workdirError.
-// This limitation exists because each base image can set its own WORKDIR and this cannot
-// be determined based on just the Containerfile.
-//
 // WARNING: named contexts in the Containerfile are not supported
 func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount, error) {
 	copies := make([]Copy, 0)
@@ -218,7 +210,12 @@ func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount,
 	for _, child := range s.Node.Children {
 		switch child.Value {
 		case "workdir":
-			workdir = child.Next.Value
+			newWorkdir := child.Next.Value
+			if filepath.IsAbs(newWorkdir) {
+				workdir = newWorkdir
+			} else {
+				workdir = filepath.Join(workdir, newWorkdir)
+			}
 
 		case "copy":
 			cp, err := parseCopy(child, workdir, env, stageNames)
