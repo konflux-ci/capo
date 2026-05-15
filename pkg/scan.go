@@ -136,6 +136,11 @@ func resolvePullspecs(storageClient storageclient.Client, stages []containerfile
 
 	for _, stage := range stages[:len(stages)-1] {
 		if _, ok := res[stage.Base]; !ok {
+			if storageclient.IsSpecialBase(stage.Base) {
+				res[stage.Base] = stage.Base
+				continue
+			}
+
 			resolved, err := resolvePullspec(storageClient, stage.Base)
 			if err != nil {
 				return nil, err
@@ -166,8 +171,11 @@ func resolvePullspecs(storageClient storageclient.Client, stages []containerfile
 }
 
 // resolvePullspec uses the passed containers store to resolve a pullspec from a containerfile
-// into a pullspec with digest without tag.
+// into a canonical pullspec with digest without tag. Transport prefixes (e.g. "docker://")
+// are stripped and not included in the result.
 func resolvePullspec(storageClient storageclient.Client, pullspec string) (string, error) {
+	pullspec = storageclient.StripTransport(pullspec)
+
 	digest, err := storageClient.ResolveDigest(pullspec)
 	if err != nil {
 		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
@@ -211,7 +219,7 @@ func getPackageSources(
 	// directories
 	baseToWorkdir := make(map[string]string)
 	for _, s := range stages {
-		if s.Base == "scratch" || s.Base == "oci:archive" {
+		if storageclient.IsSpecialBase(s.Base) {
 			continue
 		}
 

@@ -75,7 +75,7 @@ const (
 type Stage struct {
 	// Alias of the builder stage or equal to FinalStage if final.
 	Alias string
-	// Base image for the stage. Can be a pullspec, "scratch", or "oci:archive".
+	// Base image for the stage. Can be a pullspec, "scratch", or "oci-archive".
 	Base string
 	// Builder copies in this stage in order (top to bottom in the containerfile).
 	Copies []Copy

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"strings"
 
 	"github.com/konflux-ci/capo/pkg/containerfile"
 	"github.com/konflux-ci/capo/pkg/storageclient"
@@ -180,7 +179,7 @@ func resolveBaseImages(client storageclient.Client, stages []containerfile.Stage
 	seen := make(map[string]bool)
 
 	for _, stage := range stages {
-		if stage.Base == "scratch" || strings.HasPrefix(stage.Base, "oci:archive") {
+		if storageclient.IsSpecialBase(stage.Base) {
 			continue
 		}
 
