@@ -44,14 +44,23 @@ func getContent(
 	builderContentPath string,
 	intermediateContentPath string,
 ) error {
-	imgId, err := store.Lookup(pkgSource.pullspec)
-	if err != nil {
-		return fmt.Errorf("%w: %q", ErrImageNotFound, pkgSource.pullspec)
+	var builderImage *storage.Image = nil
+
+	if !storageclient.IsSpecialBase(pkgSource.pullspec) {
+		imgId, err := store.Lookup(storageclient.StripTransport(pkgSource.pullspec))
+		if err != nil {
+			return fmt.Errorf("%w: %q", ErrImageNotFound, pkgSource.pullspec)
+		}
+		builderImage, _ = store.Image(imgId)
 	}
-	img, _ := store.Image(imgId)
 
 	intermediate, err := getIntermediateContent(
-		store, client, img, pkgSource.alias, pkgSource.sources, intermediateContentPath,
+		store,
+		client,
+		builderImage,
+		pkgSource.alias,
+		pkgSource.sources,
+		intermediateContentPath,
 	)
 
 	if err != nil {
@@ -64,7 +73,12 @@ func getContent(
 		log.Printf("Included intermediate content %+v for %s.", intermediate, pkgSource.pullspec)
 	}
 
-	builder, err := getImageContent(store, img, pkgSource.sources, builderContentPath)
+	if builderImage == nil {
+		log.Printf("No builder image found for %s.", pkgSource.pullspec)
+		return nil
+	}
+
+	builder, err := getImageContent(store, builderImage, pkgSource.sources, builderContentPath)
 	if err != nil {
 		return err
 	}
@@ -202,6 +216,9 @@ func copyFile(src string, dest string) (err error) {
 // Uses buildah stage labels (io.buildah.stage.name) to find the intermediate
 // image for the given stage, then calculates a diff between the intermediate
 // top layer and the builder base image top layer.
+//
+// When builderImage is nil (special bases like scratch or oci-archive), diffs
+// against an empty parent to capture all content added during the stage.
 func getIntermediateContent(
 	store storage.Store,
 	client storageclient.Client,
@@ -210,9 +227,13 @@ func getIntermediateContent(
 	sources []string,
 	path string,
 ) ([]string, error) {
-	builderLayer, err := store.Layer(builderImage.TopLayer)
-	if err != nil {
-		return []string{}, fmt.Errorf("%w: failed to get builder layer: %w", ErrStorage, err)
+	var parentLayerID string
+	if builderImage != nil {
+		builderLayer, err := store.Layer(builderImage.TopLayer)
+		if err != nil {
+			return []string{}, fmt.Errorf("%w: failed to get builder layer: %w", ErrStorage, err)
+		}
+		parentLayerID = builderLayer.ID
 	}
 
 	// Find intermediate image using buildah stage labels
@@ -230,7 +251,7 @@ func getIntermediateContent(
 		return []string{}, fmt.Errorf("%w: failed to get intermediate layer: %w", ErrStorage, err)
 	}
 
-	included, err := saveDiff(store, path, interLayer.ID, builderLayer.ID, sources)
+	included, err := saveDiff(store, path, interLayer.ID, parentLayerID, sources)
 	if err != nil {
 		return []string{}, err
 	}

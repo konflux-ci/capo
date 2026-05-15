@@ -140,6 +140,10 @@ func getImageDigests(
 
 	for _, stage := range stages[:len(stages)-1] {
 		if _, ok := res[stage.Base]; !ok {
+			if storageclient.IsSpecialBase(stage.Base) {
+				continue
+			}
+
 			dig, err := storageClient.ResolveDigest(stage.Base)
 			if err != nil {
 				return res, fmt.Errorf("%w %q: %w", ErrPullspecResolve, stage.Base, err)
@@ -210,7 +214,7 @@ func getPackageSources(
 	// directories
 	baseToWorkdir := make(map[string]string)
 	for _, s := range stages[:len(stages)-1] {
-		if s.Base == "scratch" || s.Base == "oci:archive" {
+		if storageclient.IsSpecialBase(s.Base) {
 			continue
 		}
 
@@ -246,19 +250,27 @@ func getPackageSources(
 		}
 	}
 
+	var err error
+	pullspec := ""
+
 	// construct builder package sources
 	for i := range stages[:len(stages)-1] {
 		stage := &stages[i]
 
-		digestPullspec, err := attachDigest(stage.Base, digests[stage.Base])
-		if err != nil {
-			return nil, err
+		dig, exists := digests[stage.Base]
+		if exists {
+			pullspec, err = attachDigest(storageclient.StripTransport(stage.Base), dig)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			pullspec = stage.Base
 		}
 
 		res = append(res, packageSource{
 			alias:      stage.Alias,
 			pullspec:   stage.Base,
-			digestBase: digestPullspec,
+			digestBase: pullspec,
 			sources:    stageToSources[stage],
 		})
 
@@ -270,15 +282,20 @@ func getPackageSources(
 
 	// construct external package sources
 	for stage, sources := range stageToSources {
-		digestPullspec, err := attachDigest(stage.Base, digests[stage.Base])
-		if err != nil {
-			return nil, err
+		dig, exists := digests[stage.Base]
+		if exists {
+			pullspec, err = attachDigest(storageclient.StripTransport(stage.Base), dig)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			pullspec = stage.Base
 		}
 
 		res = append(res, packageSource{
 			alias:      stage.Alias,
 			pullspec:   stage.Base,
-			digestBase: digestPullspec,
+			digestBase: pullspec,
 			sources:    sources,
 		})
 	}
