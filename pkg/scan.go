@@ -101,7 +101,7 @@ func Scan(
 
 	// Tech debt: in this function, we use both the storageclient (for
 	// resolving pullspecs and fetching OCIImageConfigs) that uses
-	// storage.Store internallyy and the raw storage.Store struct. This was
+	// storage.Store internally and the raw storage.Store struct. This was
 	// done for ease of testing some features via a mock client. Ideally we
 	// would only have the storageclient implementation, so we had full control
 	// over unit testing.
