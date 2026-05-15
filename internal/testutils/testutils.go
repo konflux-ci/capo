@@ -12,7 +12,9 @@ import (
 
 // TStorageClient provides a mock implementation of storageclient.Client for testing.
 type TStorageClient struct {
+	// Mapping of image pullspec to the digest of the image
 	digests map[string]digest.Digest
+	// Mapping of image pullspec to the OCIImageConfig of the image
 	configs map[string]storageclient.OCIImageConfig
 }
 
