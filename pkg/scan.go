@@ -305,7 +305,13 @@ func traceSource(
 	baseToWorkdir map[string]string,
 ) {
 	coversMultipleFiles := strings.HasSuffix(source, "/") || strings.ContainsAny(source, "*?[]")
-	baseWorkdir := baseToWorkdir[currStage.Base]
+
+	baseWorkdir, ok := baseToWorkdir[currStage.Base]
+	// if unset, the default working directory in a stage is the root directory
+	if !ok {
+		baseWorkdir = "/"
+	}
+
 	foundAncestor := false
 	for _, cp := range currStage.Copies {
 		dest := cp.Destination
