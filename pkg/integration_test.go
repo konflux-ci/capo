@@ -1755,6 +1755,9 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
+		// All content from oci-archive is treated as intermediate content,
+		// even if it is from a builder stage. That is because all oci-archive
+		// bases are local and unpullable.
 		"[FROM special] FROM oci-archive as builder base": {
 			TestImage: BuildDefinition{
 				Tag: "test-from-oci-archive-builder",
@@ -1762,7 +1765,8 @@ func TestIntegration(t *testing.T) {
 										COPY go_uuid.mod /content/go.mod
 
 										FROM scratch
-										COPY --from=builder /content /content`,
+										COPY --from=builder /content /content
+										COPY --from=builder /opt /opt`,
 				ContextDirectory: "../testdata/image_content",
 			},
 			BuilderImages: []BuildDefinition{
@@ -1778,6 +1782,12 @@ func TestIntegration(t *testing.T) {
 				Packages: []PackageMetadataItem{
 					{
 						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
+						OriginType: "intermediate",
+						Pullspec:   "oci-archive:test-base.ociarchive",
+						StageAlias: "builder",
+					},
+					{
+						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
 						OriginType: "intermediate",
 						Pullspec:   "oci-archive:test-base.ociarchive",
 						StageAlias: "builder",
