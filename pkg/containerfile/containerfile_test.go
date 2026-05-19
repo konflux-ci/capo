@@ -204,6 +204,43 @@ func TestParse(t *testing.T) {
 				},
 			},
 		},
+		"workdir switching - only relative paths": {
+			containerfile: `FROM docker.io/alpine/helm:latest AS builder
+							FROM scratch
+							WORKDIR usr/
+							COPY --from=builder /usr/bin/go ./go
+							WORKDIR bin/
+							COPY --from=builder /usr/bin/capo ../..`,
+			expected: []Stage{
+				{
+					Alias:  "builder",
+					Base:   "docker.io/alpine/helm:latest",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+				},
+				{
+					Alias: FinalStage,
+					Base:  "scratch",
+					Copies: []Copy{
+						{
+							From:        "builder",
+							Sources:     []string{"/usr/bin/go"},
+							Destination: "./go",
+							Type:        CopyTypeBuilder,
+							Workdir:	 "usr",
+						},
+						{
+							From:        "builder",
+							Sources:     []string{"/usr/bin/capo"},
+							Destination: "../..",
+							Type:        CopyTypeBuilder,
+							Workdir:	 "usr/bin",
+						},
+					},
+					Mounts: []Mount{},
+				},
+			},
+		},
 		"relative paths with workdir switching": {
 			containerfile: `FROM docker.io/alpine/helm:latest AS builder
 							FROM scratch
@@ -215,7 +252,9 @@ func TestParse(t *testing.T) {
 							COPY --from=builder /usr/bin/syft ..
 							WORKDIR /usr/bin/
 							COPY --from=builder /usr/bin/capo ../..
-							COPY --from=builder /usr/bin/oras .`,
+							COPY --from=builder /usr/bin/oras .
+							WORKDIR app/
+							COPY --from=builder /usr/bin/mage .`,
 			expected: []Stage{
 				{
 					Alias:  "builder",
@@ -275,6 +314,13 @@ func TestParse(t *testing.T) {
 							Destination: ".",
 							Type:        CopyTypeBuilder,
 							Workdir:	 "/usr/bin/",
+						},
+						{
+							From:        "builder",
+							Sources:     []string{"/usr/bin/mage"},
+							Destination: ".",
+							Type:        CopyTypeBuilder,
+							Workdir:	 "/usr/bin/app",
 						},
 					},
 					Mounts: []Mount{},
