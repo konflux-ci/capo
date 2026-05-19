@@ -4,6 +4,7 @@ package capo
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -15,6 +16,11 @@ import (
 
 	"github.com/konflux-ci/capo/internal/testutils"
 )
+
+func testDigest(seed string) digest.Digest {
+	repeated := strings.Repeat(seed, 64/len(seed)+1)
+	return digest.Digest("sha256:" + repeated[:64])
+}
 
 func configWithWorkdir(workdir string) storageclient.OCIImageConfig {
 	return storageclient.OCIImageConfig{
@@ -30,10 +36,10 @@ func configWithWorkdir(workdir string) storageclient.OCIImageConfig {
 func TestGetPackageSources(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
-		stages            []containerfile.Stage
-		resolvedPullspecs map[string]string
-		configs           map[string]storageclient.OCIImageConfig
-		expected          []packageSource
+		stages   []containerfile.Stage
+		digests  map[string]digest.Digest
+		configs  map[string]storageclient.OCIImageConfig
+		expected []packageSource
 	}{
 		"only external copy in final": {
 			stages: []containerfile.Stage{
@@ -50,8 +56,8 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:abc123",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("abc123"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -60,7 +66,7 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:abc123",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("abc123")),
 					sources:    []string{"/usr/bin/oras"},
 				},
 			},
@@ -96,9 +102,9 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:def456",
-				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:ghi789",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("def456"),
+				"docker.io/alpine/helm:latest":    testDigest("ca0789"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -108,13 +114,13 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "builder1",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:def456",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("def456")),
 					sources:    []string{"/usr/bin/oras"},
 				},
 				{
 					alias:      "builder2",
 					pullspec:   "docker.io/alpine/helm:latest",
-					digestBase: "docker.io/alpine/helm@sha256:ghi789",
+					digestBase: "docker.io/alpine/helm@" + string(testDigest("ca0789")),
 					sources:    []string{"/usr/bin/helm"},
 				},
 			},
@@ -151,9 +157,9 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:jkl012",
-				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:mno345",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("da0012"),
+				"docker.io/alpine/helm:latest":    testDigest("ea0345"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -163,13 +169,13 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "builder1",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:jkl012",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("da0012")),
 					sources:    []string{"/usr/bin/oras"},
 				},
 				{
 					alias:      "builder2",
 					pullspec:   "docker.io/alpine/helm:latest",
-					digestBase: "docker.io/alpine/helm@sha256:mno345",
+					digestBase: "docker.io/alpine/helm@" + string(testDigest("ea0345")),
 					sources:    []string{},
 				},
 			},
@@ -206,9 +212,9 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:pqr678",
-				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:stu901",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("fa0678"),
+				"docker.io/alpine/helm:latest":    testDigest("5a0901"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -218,13 +224,13 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "builder1",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:pqr678",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("fa0678")),
 					sources:    []string{"/usr/bin/oras"},
 				},
 				{
 					alias:      "builder2",
 					pullspec:   "docker.io/alpine/helm:latest",
-					digestBase: "docker.io/alpine/helm@sha256:stu901",
+					digestBase: "docker.io/alpine/helm@" + string(testDigest("5a0901")),
 					sources:    []string{"/usr/bin/helm"},
 				},
 			},
@@ -267,9 +273,9 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:vwx234",
-				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:yza567",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("ba0234"),
+				"docker.io/alpine/helm:latest":    testDigest("0a0567"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -279,13 +285,13 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "builder1",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:vwx234",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("ba0234")),
 					sources:    []string{"/usr/bin/oras", "/bin/*"},
 				},
 				{
 					alias:      "builder2",
 					pullspec:   "docker.io/alpine/helm:latest",
-					digestBase: "docker.io/alpine/helm@sha256:yza567",
+					digestBase: "docker.io/alpine/helm@" + string(testDigest("0a0567")),
 					sources:    []string{"/app/"},
 				},
 			},
@@ -322,9 +328,9 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:bcd890",
-				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:efg123",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("bcd890"),
+				"docker.io/alpine/helm:latest":    testDigest("ef0123"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -334,13 +340,13 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "builder1",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:bcd890",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("bcd890")),
 					sources:    []string{},
 				},
 				{
 					alias:      "builder2",
 					pullspec:   "docker.io/alpine/helm:latest",
-					digestBase: "docker.io/alpine/helm@sha256:efg123",
+					digestBase: "docker.io/alpine/helm@" + string(testDigest("ef0123")),
 					sources:    []string{"/app/"},
 				},
 			},
@@ -389,9 +395,9 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:hij456",
-				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:klm789",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("a1f456"),
+				"docker.io/alpine/helm:latest":    testDigest("b2f789"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -401,13 +407,13 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "builder1",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:hij456",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("a1f456")),
 					sources:    []string{"/lib/libc.so", "/usr/bin/kubectl"},
 				},
 				{
 					alias:      "builder2",
 					pullspec:   "docker.io/alpine/helm:latest",
-					digestBase: "docker.io/alpine/helm@sha256:klm789",
+					digestBase: "docker.io/alpine/helm@" + string(testDigest("b2f789")),
 					sources:    []string{"/tools/", "/usr/bin/helm"},
 				},
 			},
@@ -431,8 +437,8 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:hij456",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("a1f456"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -441,7 +447,7 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "builder",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:hij456",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("a1f456")),
 					sources:    []string{"/lib/*.so"},
 				},
 			},
@@ -476,9 +482,9 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:hij456",
-				"docker.io/alpine/helm:latest":    "docker.io/library/alpine/helm@sha256:abcdef",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("a1f456"),
+				"docker.io/alpine/helm:latest":    testDigest("abcdef"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -488,13 +494,13 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "builder1",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:hij456",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("a1f456")),
 					sources:    []string{"/usr/lib/*.so"},
 				},
 				{
 					alias:      "builder2",
 					pullspec:   "docker.io/alpine/helm:latest",
-					digestBase: "docker.io/library/alpine/helm@sha256:abcdef",
+					digestBase: "docker.io/alpine/helm@" + string(testDigest("abcdef")),
 					sources:    []string{"/libs/*.so"},
 				},
 			},
@@ -518,8 +524,8 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:hij456",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("a1f456"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -528,7 +534,7 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "builder",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:hij456",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("a1f456")),
 					sources:    []string{"/usr/bin/helm", "/lib/*.so", "/etc/config.txt"},
 				},
 			},
@@ -580,9 +586,9 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:aaa111",
-				"docker.io/library/node:latest":   "docker.io/library/node@sha256:bbb222",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("aaa111"),
+				"docker.io/library/node:latest":   testDigest("bbb222"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -592,13 +598,13 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "builder1",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:aaa111",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("aaa111")),
 					sources:    []string{"/usr/bin/app", "/usr/bin/tool"},
 				},
 				{
 					alias:      "builder2",
 					pullspec:   "docker.io/library/node:latest",
-					digestBase: "docker.io/library/node@sha256:bbb222",
+					digestBase: "docker.io/library/node@" + string(testDigest("bbb222")),
 					sources:    []string{},
 				},
 			},
@@ -678,9 +684,9 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:ccc333",
-				"docker.io/library/alpine:latest": "docker.io/library/alpine@sha256:ddd444",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("ccc333"),
+				"docker.io/library/alpine:latest": testDigest("ddd444"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -690,13 +696,13 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "builder1",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:ccc333",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("ccc333")),
 					sources:    []string{"/usr/bin/cli", "/etc/app.conf", "/src/app", "/etc/defaults.conf"},
 				},
 				{
 					alias:      "builder2",
 					pullspec:   "docker.io/library/alpine:latest",
-					digestBase: "docker.io/library/alpine@sha256:ddd444",
+					digestBase: "docker.io/library/alpine@" + string(testDigest("ddd444")),
 					sources:    []string{},
 				},
 			},
@@ -746,10 +752,10 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:iii999",
-				"docker.io/library/alpine:latest": "docker.io/library/alpine@sha256:jjj000",
-				"docker.io/library/ubuntu:latest": "docker.io/library/ubuntu@sha256:kkk111",
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("111999"),
+				"docker.io/library/alpine:latest": testDigest("222000"),
+				"docker.io/library/ubuntu:latest": testDigest("333111"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
@@ -760,19 +766,19 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "builder1",
 					pullspec:   "docker.io/library/fedora:latest",
-					digestBase: "docker.io/library/fedora@sha256:iii999",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("111999")),
 					sources:    []string{"/usr/bin/app"},
 				},
 				{
 					alias:      "builder2",
 					pullspec:   "docker.io/library/alpine:latest",
-					digestBase: "docker.io/library/alpine@sha256:jjj000",
+					digestBase: "docker.io/library/alpine@" + string(testDigest("222000")),
 					sources:    []string{},
 				},
 				{
 					alias:      "builder3",
 					pullspec:   "docker.io/library/ubuntu:latest",
-					digestBase: "docker.io/library/ubuntu@sha256:kkk111",
+					digestBase: "docker.io/library/ubuntu@" + string(testDigest("333111")),
 					sources:    []string{},
 				},
 			},
@@ -832,11 +838,11 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			resolvedPullspecs: map[string]string{
-				"docker.io/library/golang:latest":    "docker.io/library/golang@sha256:lll222",
-				"docker.io/library/node:latest":      "docker.io/library/node@sha256:mmm333",
-				"registry.example.com/go-runtime:v1": "registry.example.com/go-runtime@sha256:nnn444",
-				"registry.example.com/nginx:v1":      "registry.example.com/nginx@sha256:ooo555",
+			digests: map[string]digest.Digest{
+				"docker.io/library/golang:latest":    testDigest("444222"),
+				"docker.io/library/node:latest":      testDigest("555333"),
+				"registry.example.com/go-runtime:v1": testDigest("666444"),
+				"registry.example.com/nginx:v1":      testDigest("777555"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/golang:latest":    configWithWorkdir("/go"),
@@ -848,25 +854,25 @@ func TestGetPackageSources(t *testing.T) {
 				{
 					alias:      "go-builder",
 					pullspec:   "docker.io/library/golang:latest",
-					digestBase: "docker.io/library/golang@sha256:lll222",
+					digestBase: "docker.io/library/golang@" + string(testDigest("444222")),
 					sources:    []string{"/go/bin/server"},
 				},
 				{
 					alias:      "node-builder",
 					pullspec:   "docker.io/library/node:latest",
-					digestBase: "docker.io/library/node@sha256:mmm333",
+					digestBase: "docker.io/library/node@" + string(testDigest("555333")),
 					sources:    []string{"/home/node/dist/bundle.js"},
 				},
 				{
 					alias:      "go-runner",
 					pullspec:   "registry.example.com/go-runtime:v1",
-					digestBase: "registry.example.com/go-runtime@sha256:nnn444",
+					digestBase: "registry.example.com/go-runtime@" + string(testDigest("666444")),
 					sources:    []string{},
 				},
 				{
 					alias:      "node-runner",
 					pullspec:   "registry.example.com/nginx:v1",
-					digestBase: "registry.example.com/nginx@sha256:ooo555",
+					digestBase: "registry.example.com/nginx@" + string(testDigest("777555")),
 					sources:    []string{},
 				},
 			},
@@ -877,9 +883,11 @@ func TestGetPackageSources(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			mockClient := storageclient.NewMockClient(map[string]digest.Digest{}, test.configs)
+			client := testutils.NewTStorageClient(
+				test.digests, test.configs,
+			)
 
-			actual, err := getPackageSources(mockClient, test.stages, test.resolvedPullspecs)
+			actual, err := getPackageSources(client, test.stages, test.digests)
 			if err != nil {
 				t.Fatalf("getPackageSources returned error: %v", err)
 			}
@@ -935,16 +943,21 @@ func TestResolveRelativeDestination(t *testing.T) {
 func TestGetPackageSourcesError(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
-		stages            []containerfile.Stage
-		resolvedPullspecs map[string]string
-		configs           map[string]storageclient.OCIImageConfig
-		expectedErr       error
+		stages      []containerfile.Stage
+		digests     map[string]digest.Digest
+		configs     map[string]storageclient.OCIImageConfig
+		expectedErr error
 	}{
 		"GetImageConfig error": {
 			stages: []containerfile.Stage{
 				{
-					Alias:  containerfile.FinalStage,
+					Alias:  "builder",
 					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
+				},
+				{
+					Alias:  containerfile.FinalStage,
+					Base:   "docker.io/library/ubi9:latest",
 					Copies: []containerfile.Copy{},
 				},
 			},
@@ -957,9 +970,11 @@ func TestGetPackageSourcesError(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			mockClient := testutils.NewTStorageClient(map[string]digest.Digest{}, test.configs)
+			client := testutils.NewTStorageClient(
+				test.digests, test.configs,
+			)
 
-			_, err := getPackageSources(mockClient, test.stages, test.resolvedPullspecs)
+			_, err := getPackageSources(client, test.stages, test.digests)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
