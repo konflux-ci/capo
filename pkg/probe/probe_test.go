@@ -9,10 +9,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/opencontainers/go-digest"
 
-	"github.com/konflux-ci/capo/pkg/storageclient"
 	"github.com/konflux-ci/capo/internal/testutils"
+	"github.com/konflux-ci/capo/pkg/storageclient"
 )
-
 
 func TestProbe(t *testing.T) {
 	t.Parallel()

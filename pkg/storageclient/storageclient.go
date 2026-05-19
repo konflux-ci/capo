@@ -17,8 +17,8 @@ import (
 // https://github.com/opencontainers/image-spec/blob/main/config.md
 type OCIImageConfig struct {
 	Config struct {
-		Labels map[string]string `json:"Labels"`
-		Workdir string `json:"WorkingDir"`
+		Labels  map[string]string `json:"Labels"`
+		Workdir string            `json:"WorkingDir"`
 	} `json:"config"`
 }
 

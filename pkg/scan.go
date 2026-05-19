@@ -12,6 +12,7 @@ import (
 	"github.com/konflux-ci/capo/pkg/containerfile"
 	"github.com/konflux-ci/capo/pkg/storageclient"
 
+	"github.com/opencontainers/go-digest"
 	"go.podman.io/image/v5/docker/reference"
 	"go.podman.io/storage"
 	"go.podman.io/storage/pkg/reexec"
@@ -63,6 +64,7 @@ type PackageMetadataItem struct {
 var ErrStorageSetup = errors.New("error while setting up buildah storage")
 var ErrPullspecResolve = errors.New("failed to resolve pullspec")
 var ErrOCIConfig = errors.New("failed to get OCIImageConfig")
+var ErrReferenceParse = errors.New("failed to parse image reference")
 
 func SetupStore() (storage.Store, error) {
 	// The containers/storage library requires this to run for some operations
@@ -108,12 +110,12 @@ func Scan(
 	// over unit testing.
 	storageClient := storageclient.NewBuildahClient(store)
 
-	resolvedPullspecs, err := resolvePullspecs(storageClient, stages)
+	digests, err := getImageDigests(storageClient, stages)
 	if err != nil {
 		return PackageMetadata{}, err
 	}
 
-	pkgSources, err := getPackageSources(storageClient, stages, resolvedPullspecs)
+	pkgSources, err := getPackageSources(storageClient, stages, digests)
 	if err != nil {
 		return PackageMetadata{}, err
 	}
@@ -129,20 +131,20 @@ func Scan(
 	return res, nil
 }
 
-// resolvePullspecs uses the containers store to create a mapping between pullspecs
-// used in the containerfile and pullspecs with resolved digest instead of tags.
-// Resolved pullspecs in base images of stages and --from flags in copies within stages.
-func resolvePullspecs(storageClient storageclient.Client, stages []containerfile.Stage) (map[string]string, error) {
-	res := make(map[string]string)
+// FIXME: docs
+func getImageDigests(
+	storageClient storageclient.Client, stages []containerfile.Stage,
+) (map[string]digest.Digest, error) {
+	res := make(map[string]digest.Digest)
 
 	for _, stage := range stages[:len(stages)-1] {
 		if _, ok := res[stage.Base]; !ok {
-			resolved, err := resolvePullspec(storageClient, stage.Base)
+			dig, err := storageClient.ResolveDigest(stage.Base)
 			if err != nil {
-				return nil, err
+				return res, fmt.Errorf("%w %q: %w", ErrPullspecResolve, stage.Base, err)
 			}
 
-			res[stage.Base] = resolved
+			res[stage.Base] = dig
 		}
 	}
 
@@ -153,12 +155,12 @@ func resolvePullspecs(storageClient storageclient.Client, stages []containerfile
 			}
 
 			if _, ok := res[cp.From]; !ok {
-				resolved, err := resolvePullspec(storageClient, cp.From)
+				dig, err := storageClient.ResolveDigest(cp.From)
 				if err != nil {
-					return nil, err
+					return res, fmt.Errorf("%w %q: %w", ErrPullspecResolve, cp.From, err)
 				}
 
-				res[cp.From] = resolved
+				res[cp.From] = dig
 			}
 		}
 	}
@@ -166,21 +168,14 @@ func resolvePullspecs(storageClient storageclient.Client, stages []containerfile
 	return res, nil
 }
 
-// resolvePullspec uses the passed containers store to resolve a pullspec from a containerfile
-// into a pullspec with digest without tag.
-func resolvePullspec(storageClient storageclient.Client, pullspec string) (string, error) {
-	digest, err := storageClient.ResolveDigest(pullspec)
-	if err != nil {
-		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
-	}
-
+func attachDigest(pullspec string, dig digest.Digest) (string, error) {
 	ref, err := reference.ParseNamed(pullspec)
 	if err != nil {
 		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
 	}
 
 	// remove tags if present and add the digest
-	final, err := reference.WithDigest(reference.TrimNamed(ref), digest)
+	final, err := reference.WithDigest(reference.TrimNamed(ref), dig)
 	if err != nil {
 		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
 	}
@@ -196,7 +191,7 @@ func resolvePullspec(storageClient storageclient.Client, pullspec string) (strin
 func getPackageSources(
 	storageClient storageclient.Client,
 	stages []containerfile.Stage,
-	resolvedPullspecs map[string]string,
+	digests map[string]digest.Digest,
 ) ([]packageSource, error) {
 	res := make([]packageSource, 0)
 	aliasToStage := make(map[string]*containerfile.Stage)
@@ -211,7 +206,7 @@ func getPackageSources(
 	// mapping of bases used in the containerfile to their initial working
 	// directories
 	baseToWorkdir := make(map[string]string)
-	for _, s := range stages {
+	for _, s := range stages[:len(stages)-1] {
 		if s.Base == "scratch" || s.Base == "oci:archive" {
 			continue
 		}
@@ -252,10 +247,9 @@ func getPackageSources(
 	for i := range stages[:len(stages)-1] {
 		stage := &stages[i]
 
-		digestPullspec, ok := resolvedPullspecs[stage.Base]
-		if !ok {
-			return []packageSource{},
-				fmt.Errorf("%w %q: could not find resolved pullspec", ErrPullspecResolve, stage.Base)
+		digestPullspec, err := attachDigest(stage.Base, digests[stage.Base])
+		if err != nil {
+			return nil, err
 		}
 
 		res = append(res, packageSource{
@@ -273,10 +267,9 @@ func getPackageSources(
 
 	// construct external package sources
 	for stage, sources := range stageToSources {
-		digestPullspec, ok := resolvedPullspecs[stage.Base]
-		if !ok {
-			return []packageSource{},
-				fmt.Errorf("%w %q: could not find resolved pullspec", ErrPullspecResolve, stage.Base)
+		digestPullspec, err := attachDigest(stage.Base, digests[stage.Base])
+		if err != nil {
+			return nil, err
 		}
 
 		res = append(res, packageSource{
