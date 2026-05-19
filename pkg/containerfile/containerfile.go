@@ -48,6 +48,8 @@ type Copy struct {
 	// command.
 	// Is empty if the containerfile does not explicitly set a working
 	// directory before the COPY command.
+	// If it's relative, it's always relative to the base working directory in
+	// the stage the COPY command appeared in.
 	Workdir string
 }
 

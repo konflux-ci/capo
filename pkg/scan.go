@@ -93,6 +93,7 @@ func Scan(
 	res := PackageMetadata{
 		Packages: make([]PackageMetadataItem, 0),
 	}
+	log.Printf("[STAGES] %+v", stages)
 
 	store, err := SetupStore()
 	if err != nil {
@@ -314,14 +315,13 @@ func traceSource(
 
 	foundAncestor := false
 	for _, cp := range currStage.Copies {
-		dest := cp.Destination
-		if !filepath.IsAbs(cp.Destination) {
-			if cp.Workdir != "" {
-				dest = filepath.Join(cp.Workdir, cp.Destination)
-			} else {
-				dest = filepath.Join(baseWorkdir, cp.Destination)
-			}
+		dest := ""
+		if filepath.IsAbs(cp.Destination) {
+			dest = cp.Destination
+		} else {
+			dest = resolveRelativeDestination(cp, baseWorkdir)
 		}
+
 		sourceCoversDestination := isPathUnderPattern(source, dest)
 		destinationCoversSource := isPathUnderPattern(dest, source)
 		if sourceCoversDestination || destinationCoversSource {
@@ -343,6 +343,31 @@ func traceSource(
 	if coversMultipleFiles || !foundAncestor {
 		acc[currStage] = append(acc[currStage], source)
 	}
+}
+
+// Get the true destination of a COPY command, resolving relative paths.
+// cp is the copy command to resolve the destination of.
+// baseWorkdir is the working directory of the base image the COPY command
+// appeared in.
+func resolveRelativeDestination(cp containerfile.Copy, baseWorkdir string) string {
+	// If no WORKDIR command precedes the COPY, its destination is relative to
+	// the base image working directory.
+	if cp.Workdir == "" {
+		return filepath.Join(baseWorkdir, cp.Destination)
+	}
+
+	// If an absolute WORKDIR command precedes the COPY, the destination is
+	// relative to that WORKDIR.
+	if filepath.IsAbs(cp.Workdir) {
+		return filepath.Join(cp.Workdir, cp.Destination)
+	}
+
+	// If the WORKDIR command preceding the COPY contained a relative path, and
+	// the COPY's destination is relative, we join all three paths to get the
+	// absolute path.
+	// This is possible because the Workdir field always contains a relative to
+	// the stage's working directory.
+	return filepath.Join(baseWorkdir, cp.Workdir, cp.Destination)
 }
 
 // scanSource uses the passed initialized storage.Store struct to syft scan content

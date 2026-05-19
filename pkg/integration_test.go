@@ -1960,6 +1960,46 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
+		// Check that if the builder image base image has a workdir set, a
+		// relative WORKDIR command in the intermediate layers is correctly
+		// joined and the origin is correctly set to "builder" and not "builder2".
+		"workdir from builder image joined with relative workdir in intermediate": {
+			TestImage: BuildDefinition{
+				Tag: "test-relative-workdir-join",
+				ContainerfileContent: `FROM localhost/workdir-inherited-base:latest AS builder
+									   COPY go_syft.mod /opt/app/go.mod
+
+									   FROM localhost/workdir-inherited-base:latest AS builder2
+									   WORKDIR app/
+				                       COPY --from=builder /opt/app/go.mod go.mod
+
+									   FROM scratch
+									   COPY --from=builder2 /opt/app/go.mod /go.mod`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "localhost/workdir-inherited-base:latest",
+					ContainerfileContent: `FROM scratch
+										   # this copy command is here to make sure buildah
+										   # creates at least one layer for the builder image
+										   COPY go_uuid.mod go.mod
+										   WORKDIR /opt`,
+
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/workdir-inherited-base@sha256:dummy",
+						StageAlias: "builder",
+					},
+				},
+			},
+		},
 	}
 	store, err := SetupStore()
 	if err != nil {

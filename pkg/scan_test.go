@@ -897,6 +897,41 @@ func TestGetPackageSources(t *testing.T) {
 	}
 }
 
+func TestResolveRelativeDestination(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		cp          containerfile.Copy
+		baseWorkdir string
+		expected    string
+	}{
+		"no workdir": {
+			cp:          containerfile.Copy{Destination: "app/"},
+			baseWorkdir: "/root",
+			expected:    "/root/app",
+		},
+		"absolute workdir": {
+			cp:          containerfile.Copy{Workdir: "/usr/src", Destination: "dist/"},
+			baseWorkdir: "/ignored",
+			expected:    "/usr/src/dist",
+		},
+		"relative workdir": {
+			cp:          containerfile.Copy{Workdir: "subdir", Destination: "files/"},
+			baseWorkdir: "/base",
+			expected:    "/base/subdir/files",
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got := resolveRelativeDestination(test.cp, test.baseWorkdir)
+			if got != test.expected {
+				t.Errorf("resolveRelativeDestination() = %q, want %q", got, test.expected)
+			}
+		})
+	}
+}
+
 func TestGetPackageSourcesError(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
