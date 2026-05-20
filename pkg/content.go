@@ -51,7 +51,7 @@ func getContent(
 	intermediateContentPath string,
 ) error {
 	isSpecialBase := storageclient.IsSpecialBase(pkgSource.pullspec)
-	var builderImage *storage.Image = nil
+	var builderImage *storage.Image
 
 	if !isSpecialBase {
 		// Special bases are not pullable or resolvable with Lookup
@@ -75,7 +75,7 @@ func getContent(
 	logContent("intermediate", intermediate, pkgSource.pullspec)
 
 	if !isSpecialBase {
-		// Only standard bases have bulder content. All content in special bases is treated as intermediate.
+		// Only standard bases have builder content. All content in special bases is treated as intermediate.
 		builderContent, err := getImageContent(store, builderImage, pkgSource.sources, builderContentPath)
 		if err != nil {
 			return err

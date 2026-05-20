@@ -1802,14 +1802,16 @@ func TestIntegration(t *testing.T) {
 										COPY go_uuid.mod /content/go.mod
 
 										FROM scratch
-										COPY --from=builder /content /content`,
+										COPY --from=builder /content /content
+										COPY --from=builder /C /content`,
 				ContextDirectory: "../testdata/image_content",
 			},
 			BuilderImages: []BuildDefinition{
 				{
 					Tag: "localhost/docker-transport-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go2.mod /base/go.mod`,
+											COPY go2.mod /base/go.mod
+											COPY go_syft.mod /C/Users/Shadowman/Desktop/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
@@ -1818,6 +1820,12 @@ func TestIntegration(t *testing.T) {
 					{
 						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
 						OriginType: "intermediate",
+						Pullspec:   "localhost/docker-transport-base@sha256:dummy",
+						StageAlias: "builder",
+					},
+					{
+						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
+						OriginType: "builder",
 						Pullspec:   "localhost/docker-transport-base@sha256:dummy",
 						StageAlias: "builder",
 					},
