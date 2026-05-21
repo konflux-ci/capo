@@ -1300,7 +1300,6 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[External content] External COPY in final stage": {
-			SkipTestReason: "[Priority: medium] origin_type 'external' not yet implemented - capo reports external content as 'builder'. Works otherwise.",
 			TestImage: BuildDefinition{
 				Tag: "test-external-copy-final",
 				ContainerfileContent: `FROM localhost/builder-base:latest AS builder
@@ -1833,7 +1832,6 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[RUN --mount] --mount from external image in builder stage": {
-			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
 			TestImage: BuildDefinition{
 				Tag: "test-mount-external-in-builder",
 				ContainerfileContent: `FROM localhost/mount-ext-base:latest AS builder
@@ -1870,7 +1868,7 @@ func TestIntegration(t *testing.T) {
 						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
 						OriginType: "external",
 						Pullspec:   "localhost/mount-ext-source@sha256:dummy",
-						StageAlias: "builder",
+						StageAlias: "",
 					},
 					{
 						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
@@ -1882,7 +1880,6 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[RUN --mount] --mount from builder stage in another builder stage": {
-			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
 			TestImage: BuildDefinition{
 				Tag: "test-mount-builder-stage",
 				ContainerfileContent: `FROM localhost/mount-stage-base:latest AS provider
@@ -1934,7 +1931,6 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[RUN --mount] --mount from external image in final stage": {
-			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
 			TestImage: BuildDefinition{
 				Tag: "test-mount-external-final",
 				ContainerfileContent: `FROM localhost/mount-ext-final-base:latest AS builder
@@ -1982,7 +1978,6 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[RUN --mount] --mount from builder stage in final stage": {
-			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
 			TestImage: BuildDefinition{
 				Tag: "test-mount-builder-final",
 				ContainerfileContent: `FROM localhost/mount-builder-final-base:latest AS builder

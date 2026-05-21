@@ -36,6 +36,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libgpgme-dev libseccomp-dev
 
+    - name: Install crun >= 1.14.3 (required for OCI runtime spec v1.2.1)
+      run: |
+        CRUN_VERSION=1.27.1
+        curl -fsSL "https://github.com/containers/crun/releases/download/${CRUN_VERSION}/crun-${CRUN_VERSION}-linux-amd64" -o /tmp/crun
+        sudo install -m 0755 /tmp/crun /usr/bin/crun
+
     - name: Build custom buildah with intermediate image labeling support
       run: mage BuildCustomBuildah
 

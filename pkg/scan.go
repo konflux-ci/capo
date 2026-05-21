@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/konflux-ci/capo/internal/sbom"
@@ -49,7 +50,9 @@ type PackageMetadataItem struct {
 	// found multiple times as a dependency of different packages.
 	DependencyOfPURL string `json:"dependency_of_purl,omitempty"`
 
-	// Type of origin of this package, can be "builder" or "intermediate".
+	// Type of origin of this package: "builder" (from a builder stage's base image),
+	// "intermediate" (created during the build in a builder stage), or "external"
+	// (from an external image referenced via COPY --from or RUN --mount).
 	OriginType string `json:"origin_type"`
 
 	// Pullspec of the image with digest which is this package's origin.
@@ -112,19 +115,17 @@ func Scan(
 		return PackageMetadata{}, err
 	}
 
-	pkgSources, err := getPackageSources(storageClient, stages, resolvedPullspecs)
+	pkgSources, mountOnlySources, err := getPackageSources(storageClient, stages, resolvedPullspecs)
 	if err != nil {
 		return PackageMetadata{}, err
 	}
-	for _, pkgSource := range pkgSources {
-		stagePkgItems, err := scanSource(store, pkgSource)
-		if err != nil {
-			return PackageMetadata{}, fmt.Errorf("failed to scan source %+v with error: %w", pkgSource, err)
-		}
 
-		res.Packages = append(res.Packages, stagePkgItems...)
+	packages, err := scanWithMountReattribution(stages, pkgSources, mountOnlySources, store)
+	if err != nil {
+		return PackageMetadata{}, err
 	}
 
+	res.Packages = packages
 	return res, nil
 }
 
@@ -135,18 +136,12 @@ func resolvePullspecs(storageClient storageclient.Client, stages []containerfile
 	res := make(map[string]string)
 
 	for _, stage := range stages[:len(stages)-1] {
-		if _, ok := res[stage.Base]; !ok {
-			if storageclient.IsSpecialBase(stage.Base) {
-				res[stage.Base] = stage.Base
-				continue
-			}
-
-			resolved, err := resolvePullspec(storageClient, stage.Base)
-			if err != nil {
-				return nil, err
-			}
-
-			res[stage.Base] = resolved
+		if storageclient.IsSpecialBase(stage.Base) {
+			res[stage.Base] = stage.Base
+			continue
+		}
+		if err := resolveIfNew(res, storageClient, stage.Base); err != nil {
+			return nil, err
 		}
 	}
 
@@ -155,19 +150,33 @@ func resolvePullspecs(storageClient storageclient.Client, stages []containerfile
 			if cp.Type == containerfile.CopyTypeBuilder {
 				continue
 			}
-
-			if _, ok := res[cp.From]; !ok {
-				resolved, err := resolvePullspec(storageClient, cp.From)
-				if err != nil {
-					return nil, err
-				}
-
-				res[cp.From] = resolved
+			if err := resolveIfNew(res, storageClient, cp.From); err != nil {
+				return nil, err
+			}
+		}
+		for _, mount := range stage.Mounts {
+			if mount.Type == containerfile.MountTypeBuilder {
+				continue
+			}
+			if err := resolveIfNew(res, storageClient, mount.From); err != nil {
+				return nil, err
 			}
 		}
 	}
 
 	return res, nil
+}
+
+func resolveIfNew(res map[string]string, storageClient storageclient.Client, pullspec string) error {
+	if _, ok := res[pullspec]; ok {
+		return nil
+	}
+	resolved, err := resolvePullspec(storageClient, pullspec)
+	if err != nil {
+		return err
+	}
+	res[pullspec] = resolved
+	return nil
 }
 
 // resolvePullspec uses the passed containers store to resolve a pullspec from a containerfile
@@ -195,28 +204,40 @@ func resolvePullspec(storageClient storageclient.Client, pullspec string) (strin
 	return final.String(), nil
 }
 
-// getPackageSources uses the passed containerfile stages and returns a slice
-// of packageSource structs, specifying which COPY-ied content originates from
-// which builder stage. Uses the passed storageclient.Client to get
-// OCIImageConfigs of base images to get their default workdirs for relative
-// path resolution in copy destinations.
+// getPackageSources uses the passed containerfile stages and returns two slices
+// of packageSource structs. The first slice contains sources whose findings are
+// reported in the output. The second slice contains mount-only sources: builder
+// stages referenced only via RUN --mount in non-final stages, scanned solely for
+// re-attribution of packages to their mount origin. Uses the passed storageclient.Client to get
+// OCIImageConfigs of base images to get their default workdirs for relative path
+// resolution in copy destinations.
 func getPackageSources(
 	storageClient storageclient.Client,
 	stages []containerfile.Stage,
 	resolvedPullspecs map[string]string,
-) ([]packageSource, error) {
-	res := make([]packageSource, 0)
+) ([]packageSource, []packageSource, error) {
 	aliasToStage := make(map[string]*containerfile.Stage)
-
-	// use index iteration to get consistent references to stages
-	// since we use the references as map keys
 	for i := range stages[:len(stages)-1] {
 		st := &stages[i]
 		aliasToStage[st.Alias] = st
 	}
 
-	// mapping of bases used in the containerfile to their initial working
-	// directories
+	baseToWorkdir, err := resolveBaseWorkdirs(storageClient, stages)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	stageToSources, mountStageSources := collectStageSources(stages, aliasToStage, baseToWorkdir)
+
+	return buildPackageSourceSlices(stages, stageToSources, mountStageSources, resolvedPullspecs)
+}
+
+// resolveBaseWorkdirs builds a map from base image pullspec to its initial
+// working directory, used for resolving relative COPY destinations.
+func resolveBaseWorkdirs(
+	storageClient storageclient.Client,
+	stages []containerfile.Stage,
+) (map[string]string, error) {
 	baseToWorkdir := make(map[string]string)
 	for _, s := range stages {
 		if storageclient.IsSpecialBase(s.Base) {
@@ -225,76 +246,12 @@ func getPackageSources(
 
 		cfg, err := storageClient.GetImageConfig(s.Base)
 		if err != nil {
-			return []packageSource{}, fmt.Errorf("%w for %q", ErrOCIConfig, s.Base)
+			return nil, fmt.Errorf("%w for %q", ErrOCIConfig, s.Base)
 		}
 
 		baseToWorkdir[s.Base] = cfg.Config.Workdir
 	}
-
-	// The following code block reads all the builder COPY-ies in the final stage
-	// and recursively traces their content to their respective origins in previous stages.
-	// Builds a map between references to containerfile stages and the sources used in the COPY.
-	final := &stages[len(stages)-1]
-	stageToSources := make(map[*containerfile.Stage][]string)
-
-	for _, cp := range final.Copies {
-		for _, source := range cp.Sources {
-			// the copy is builder type only if there's no builder stage with alias equal to the cp.from
-			// otherwise the cp.from is a pullspec and it is an external copy
-			if _, isBuilder := aliasToStage[cp.From]; isBuilder {
-				traceSource(source, aliasToStage[cp.From], stageToSources, aliasToStage, baseToWorkdir)
-			} else {
-				external := containerfile.Stage{
-					Alias:  "",
-					Base:   cp.From,
-					Copies: []containerfile.Copy{},
-				}
-
-				stageToSources[&external] = append(stageToSources[&external], source)
-			}
-		}
-	}
-
-	// construct builder package sources
-	for i := range stages[:len(stages)-1] {
-		stage := &stages[i]
-
-		digestPullspec, ok := resolvedPullspecs[stage.Base]
-		if !ok {
-			return []packageSource{},
-				fmt.Errorf("%w %q: could not find resolved pullspec", ErrPullspecResolve, stage.Base)
-		}
-
-		res = append(res, packageSource{
-			alias:      stage.Alias,
-			pullspec:   stage.Base,
-			digestBase: digestPullspec,
-			sources:    stageToSources[stage],
-		})
-
-		// the processed stage must be deleted from stageToSources so it only
-		// contains "external" stages after builder stages are constructed.
-		// These are then processed in the next code block below.
-		delete(stageToSources, stage)
-	}
-
-	// construct external package sources
-	for stage, sources := range stageToSources {
-		digestPullspec, ok := resolvedPullspecs[stage.Base]
-		if !ok {
-			return []packageSource{},
-				fmt.Errorf("%w %q: could not find resolved pullspec", ErrPullspecResolve, stage.Base)
-		}
-
-		res = append(res, packageSource{
-			alias:      stage.Alias,
-			pullspec:   stage.Base,
-			digestBase: digestPullspec,
-			sources:    sources,
-		})
-	}
-
-	return res, nil
+	return baseToWorkdir, nil
 }
 
 // traceSource takes a source path and the stage it was found in and recursively
@@ -351,6 +308,24 @@ func traceSource(
 	if coversMultipleFiles || !foundAncestor {
 		acc[currStage] = append(acc[currStage], source)
 	}
+}
+
+// mergeStageSources merges mount-derived source paths into direct source paths,
+// deduplicating entries. Returns nil if directSources is nil and there are no
+// mount sources to merge.
+func mergeStageSources(directSources, mountSources []string) []string {
+	if mountSources == nil {
+		return directSources
+	}
+	if directSources == nil {
+		return nil
+	}
+	for _, s := range mountSources {
+		if !slices.Contains(directSources, s) {
+			directSources = append(directSources, s)
+		}
+	}
+	return directSources
 }
 
 // scanSource uses the passed initialized storage.Store struct to syft scan content
@@ -412,34 +387,172 @@ func scanSource(
 
 // getPackageMetadata uses the passed packageSource and its builder and intermediate
 // packages to return a slice of PackageMetadataItem structs to signify package origins.
+// External sources (alias == "") use OriginType "external" for all packages.
 func getPackageMetadata(
 	pkgSource packageSource,
 	builderPkgs []sbom.SyftPackage,
 	intermediatePkgs []sbom.SyftPackage,
 ) []PackageMetadataItem {
+	isExternal := pkgSource.alias == ""
 	res := make([]PackageMetadataItem, 0, len(builderPkgs)+len(intermediatePkgs))
 
 	for _, bpkg := range builderPkgs {
+		originType := "builder"
+		if isExternal {
+			originType = "external"
+		}
 		res = append(res, PackageMetadataItem{
 			Pullspec:         pkgSource.digestBase,
 			StageAlias:       pkgSource.alias,
 			PackageURL:       bpkg.PURL,
 			DependencyOfPURL: bpkg.DependencyOfPURL,
 			Checksums:        bpkg.Checksums,
-			OriginType:       "builder",
+			OriginType:       originType,
 		})
 	}
 
 	for _, ipkg := range intermediatePkgs {
+		originType := "intermediate"
+		if isExternal {
+			originType = "external"
+		}
 		res = append(res, PackageMetadataItem{
 			Pullspec:         pkgSource.digestBase,
 			StageAlias:       pkgSource.alias,
 			PackageURL:       ipkg.PURL,
 			DependencyOfPURL: ipkg.DependencyOfPURL,
 			Checksums:        ipkg.Checksums,
-			OriginType:       "intermediate",
+			OriginType:       originType,
 		})
 	}
 
 	return res
+}
+
+// mountConsumer identifies a specific package within a consuming stage,
+// used to look up whether it came from a mounted source.
+type mountConsumer struct {
+	stageAlias string
+	packageURL string
+}
+
+// mountOrigin holds the mount source's identity for a package. When a stage
+// uses RUN --mount and we find the same package in both the stage's
+// intermediate layer and the mount source, this struct tells us where the
+// package actually came from so we can correct its reported origin.
+type mountOrigin struct {
+	digestBase         string
+	providerStageAlias string
+	originType         string
+	// When true, the mount source is already in the reportable results,
+	// so we deduplicate (drop) the consuming stage's copy. When false,
+	// we overwrite the consuming stage's origin fields with the mount source's.
+	reported bool
+}
+
+// scanWithMountReattribution scans all package sources and applies mount
+// re-attribution. For each stage with RUN --mount, intermediate packages
+// matching a mount source are either re-attributed (origin details overwritten)
+// or deduplicated (dropped), depending on whether the mount source is already
+// in pkgSources (directly reported) or only in mountOnlySources.
+func scanWithMountReattribution(
+	stages []containerfile.Stage,
+	pkgSources []packageSource,
+	mountOnlySources []packageSource,
+	store storage.Store,
+) ([]PackageMetadataItem, error) {
+	// Map mount reference (stage alias or pullspec) to the aliases of
+	// stages that consume it via RUN --mount.
+	consumers := make(map[string][]string)
+	for _, stage := range stages {
+		for _, mount := range stage.Mounts {
+			consumers[mount.From] = append(consumers[mount.From], stage.Alias)
+		}
+	}
+
+	origins := make(map[mountConsumer]mountOrigin)
+
+	// Scan mount-only sources and register their packages (reported=false).
+	for _, src := range mountOnlySources {
+		items, err := scanSource(store, src)
+		if err != nil {
+			return nil, err
+		}
+		registerMountPackages(origins, consumers, src, items, false)
+	}
+
+	// Scan reportable sources, register their packages for mount lookups
+	// (reported=true), and collect all scanned items per source.
+	sourcesItems := make([][]PackageMetadataItem, 0, len(pkgSources))
+	for _, src := range pkgSources {
+		items, err := scanSource(store, src)
+		if err != nil {
+			return nil, err
+		}
+		registerMountPackages(origins, consumers, src, items, true)
+		sourcesItems = append(sourcesItems, items)
+	}
+
+	// Apply re-attribution: for each intermediate package that matches a
+	// mount origin, either overwrite its origin fields or drop it.
+	var packages []PackageMetadataItem
+	for i, src := range pkgSources {
+		for _, item := range sourcesItems[i] {
+			if item.OriginType != "intermediate" {
+				packages = append(packages, item)
+				continue
+			}
+			origin, fromMount := origins[mountConsumer{stageAlias: src.alias, packageURL: item.PackageURL}]
+			if !fromMount {
+				packages = append(packages, item)
+				continue
+			}
+			if origin.reported {
+				log.Printf("Deduplicating intermediate package %s from stage %q (mount source already reported).",
+					item.PackageURL, src.alias)
+				continue
+			}
+			log.Printf("Re-attributing intermediate package %s from stage %q to mount source %q.",
+				item.PackageURL, src.alias, origin.providerStageAlias)
+			item.Pullspec = origin.digestBase
+			item.StageAlias = origin.providerStageAlias
+			item.OriginType = origin.originType
+			packages = append(packages, item)
+		}
+	}
+
+	return packages, nil
+}
+
+// registerMountPackages populates the origins map for a single scan result
+// that may be referenced as a mount source. For each package in the result,
+// it is registered under every consuming stage that mounts from this source.
+func registerMountPackages(
+	origins map[mountConsumer]mountOrigin,
+	consumers map[string][]string,
+	source packageSource,
+	items []PackageMetadataItem,
+	reported bool,
+) {
+	refKey := source.alias
+	if refKey == "" {
+		refKey = source.pullspec
+	}
+	stageAliases := consumers[refKey]
+	if len(stageAliases) == 0 {
+		return
+	}
+	for _, stageAlias := range stageAliases {
+		for _, pkg := range items {
+			key := mountConsumer{stageAlias: stageAlias, packageURL: pkg.PackageURL}
+			if _, exists := origins[key]; !exists {
+				origins[key] = mountOrigin{
+					digestBase:         source.digestBase,
+					providerStageAlias: source.alias,
+					originType:         pkg.OriginType,
+					reported:           reported,
+				}
+			}
+		}
+	}
 }

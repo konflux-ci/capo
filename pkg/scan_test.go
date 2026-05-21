@@ -34,6 +34,7 @@ func TestGetPackageSources(t *testing.T) {
 		resolvedPullspecs map[string]string
 		configs           map[string]storageclient.OCIImageConfig
 		expected          []packageSource
+		expectedMountOnly []packageSource
 	}{
 		"only external copy in final": {
 			stages: []containerfile.Stage{
@@ -544,7 +545,6 @@ func TestGetPackageSources(t *testing.T) {
 					Alias: "builder2",
 					Base:  "docker.io/library/node:latest",
 					Copies: []containerfile.Copy{
-						// explicit workdir takes precedence over base image workdir (/var/data)
 						{
 							From:        "builder1",
 							Sources:     []string{"/usr/bin/app"},
@@ -552,7 +552,6 @@ func TestGetPackageSources(t *testing.T) {
 							Type:        containerfile.CopyTypeBuilder,
 							Workdir:     "/usr/local",
 						},
-						// base image workdir resolves relative destination
 						{
 							From:        "builder1",
 							Sources:     []string{"/usr/bin/tool"},
@@ -614,14 +613,12 @@ func TestGetPackageSources(t *testing.T) {
 					Alias: "builder2",
 					Base:  "docker.io/library/alpine:latest",
 					Copies: []containerfile.Copy{
-						// absolute destination (no workdir resolution)
 						{
 							From:        "builder1",
 							Sources:     []string{"/usr/bin/cli"},
 							Destination: "/usr/local/bin/cli",
 							Type:        containerfile.CopyTypeBuilder,
 						},
-						// parent directory navigation
 						{
 							From:        "builder1",
 							Sources:     []string{"/etc/app.conf"},
@@ -629,7 +626,6 @@ func TestGetPackageSources(t *testing.T) {
 							Type:        containerfile.CopyTypeBuilder,
 							Workdir:     "/app/subdir",
 						},
-						// dot destination resolves to workdir
 						{
 							From:        "builder1",
 							Sources:     []string{"/src/app"},
@@ -637,7 +633,6 @@ func TestGetPackageSources(t *testing.T) {
 							Type:        containerfile.CopyTypeBuilder,
 							Workdir:     "/opt",
 						},
-						// workdir switching within stage
 						{
 							From:        "builder1",
 							Sources:     []string{"/etc/defaults.conf"},
@@ -871,6 +866,231 @@ func TestGetPackageSources(t *testing.T) {
 				},
 			},
 		},
+		"external mount in final stage": {
+			stages: []containerfile.Stage{
+				{
+					Alias:  "builder",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
+				},
+				{
+					Alias: containerfile.FinalStage,
+					Base:  "scratch",
+					Copies: []containerfile.Copy{
+						{
+							From:        "builder",
+							Sources:     []string{"/opt/"},
+							Destination: "/opt/",
+							Type:        containerfile.CopyTypeBuilder,
+						},
+					},
+					Mounts: []containerfile.Mount{
+						{
+							From:   "quay.io/tools:1",
+							Type:   containerfile.MountTypeExternal,
+							Source: "/",
+						},
+					},
+				},
+			},
+			resolvedPullspecs: map[string]string{
+				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:abc123",
+				"quay.io/tools:1":                 "quay.io/tools@sha256:def456",
+			},
+			configs: map[string]storageclient.OCIImageConfig{
+				"docker.io/library/fedora:latest": configWithWorkdir("/"),
+			},
+			expected: []packageSource{
+				{
+					alias:      "builder",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:abc123",
+					sources:    []string{"/opt/"},
+				},
+				{
+					alias:      "",
+					pullspec:   "quay.io/tools:1",
+					digestBase: "quay.io/tools@sha256:def456",
+					sources:    []string{"/"},
+				},
+			},
+		},
+		"builder mount in final stage broadens sources": {
+			stages: []containerfile.Stage{
+				{
+					Alias:  "builder",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
+				},
+				{
+					Alias:  containerfile.FinalStage,
+					Base:   "scratch",
+					Copies: []containerfile.Copy{},
+					Mounts: []containerfile.Mount{
+						{
+							From:   "builder",
+							Type:   containerfile.MountTypeBuilder,
+							Source: "/",
+						},
+					},
+				},
+			},
+			resolvedPullspecs: map[string]string{
+				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:abc123",
+			},
+			configs: map[string]storageclient.OCIImageConfig{
+				"docker.io/library/fedora:latest": configWithWorkdir("/"),
+			},
+			expected: []packageSource{
+				{
+					alias:      "builder",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:abc123",
+					sources:    []string{"/"},
+				},
+			},
+		},
+		"builder mount in builder stage": {
+			stages: []containerfile.Stage{
+				{
+					Alias:  "provider",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
+				},
+				{
+					Alias:  "consumer",
+					Base:   "docker.io/alpine/helm:latest",
+					Copies: []containerfile.Copy{},
+					Mounts: []containerfile.Mount{
+						{
+							From:   "provider",
+							Type:   containerfile.MountTypeBuilder,
+							Source: "/",
+						},
+					},
+				},
+				{
+					Alias: containerfile.FinalStage,
+					Base:  "scratch",
+					Copies: []containerfile.Copy{
+						{
+							From:        "consumer",
+							Sources:     []string{"/opt/"},
+							Destination: "/opt/",
+							Type:        containerfile.CopyTypeBuilder,
+						},
+					},
+				},
+			},
+			resolvedPullspecs: map[string]string{
+				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:abc123",
+				"docker.io/alpine/helm:latest":    "docker.io/alpine/helm@sha256:def456",
+			},
+			configs: map[string]storageclient.OCIImageConfig{
+				"docker.io/library/fedora:latest": configWithWorkdir("/"),
+				"docker.io/alpine/helm:latest":    configWithWorkdir("/"),
+			},
+			expected: []packageSource{
+				{
+					alias:      "consumer",
+					pullspec:   "docker.io/alpine/helm:latest",
+					digestBase: "docker.io/alpine/helm@sha256:def456",
+					sources:    []string{"/opt/"},
+				},
+			},
+			expectedMountOnly: []packageSource{
+				{
+					alias:      "provider",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:abc123",
+					sources:    []string{"/"},
+				},
+			},
+		},
+		"external mount in builder stage": {
+			stages: []containerfile.Stage{
+				{
+					Alias:  "builder",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
+					Mounts: []containerfile.Mount{
+						{
+							From:   "quay.io/tools:1",
+							Type:   containerfile.MountTypeExternal,
+							Source: "/",
+						},
+					},
+				},
+				{
+					Alias: containerfile.FinalStage,
+					Base:  "scratch",
+					Copies: []containerfile.Copy{
+						{
+							From:        "builder",
+							Sources:     []string{"/opt/"},
+							Destination: "/opt/",
+							Type:        containerfile.CopyTypeBuilder,
+						},
+					},
+				},
+			},
+			resolvedPullspecs: map[string]string{
+				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:abc123",
+				"quay.io/tools:1":                 "quay.io/tools@sha256:def456",
+			},
+			configs: map[string]storageclient.OCIImageConfig{
+				"docker.io/library/fedora:latest": configWithWorkdir("/"),
+			},
+			expected: []packageSource{
+				{
+					alias:      "builder",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:abc123",
+					sources:    []string{"/opt/"},
+				},
+				{
+					alias:      "",
+					pullspec:   "quay.io/tools:1",
+					digestBase: "quay.io/tools@sha256:def456",
+					sources:    []string{"/"},
+				},
+			},
+		},
+		"mount with specific source narrows scan path": {
+			stages: []containerfile.Stage{
+				{
+					Alias:  "builder",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
+				},
+				{
+					Alias:  containerfile.FinalStage,
+					Base:   "scratch",
+					Copies: []containerfile.Copy{},
+					Mounts: []containerfile.Mount{
+						{
+							From:   "builder",
+							Type:   containerfile.MountTypeBuilder,
+							Source: "/usr/lib",
+						},
+					},
+				},
+			},
+			resolvedPullspecs: map[string]string{
+				"docker.io/library/fedora:latest": "docker.io/library/fedora@sha256:abc123",
+			},
+			configs: map[string]storageclient.OCIImageConfig{
+				"docker.io/library/fedora:latest": configWithWorkdir("/"),
+			},
+			expected: []packageSource{
+				{
+					alias:      "builder",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@sha256:abc123",
+					sources:    []string{"/usr/lib"},
+				},
+			},
+		},
 	}
 
 	for name, test := range tests {
@@ -879,19 +1099,27 @@ func TestGetPackageSources(t *testing.T) {
 
 			mockClient := storageclient.NewMockClient(map[string]digest.Digest{}, test.configs)
 
-			actual, err := getPackageSources(mockClient, test.stages, test.resolvedPullspecs)
+			actual, actualMountOnly, err := getPackageSources(mockClient, test.stages, test.resolvedPullspecs)
 			if err != nil {
 				t.Fatalf("getPackageSources returned error: %v", err)
 			}
 
-			diff := cmp.Diff(
-				test.expected, actual,
+			cmpOpts := cmp.Options{
 				cmp.AllowUnexported(packageSource{}),
-				cmpopts.SortSlices(func(a, b packageSource) bool { return a.alias < b.alias }),
+				cmpopts.SortSlices(func(a, b packageSource) bool {
+					if a.alias != b.alias {
+						return a.alias < b.alias
+					}
+					return a.pullspec < b.pullspec
+				}),
 				cmpopts.EquateEmpty(),
-			)
-			if diff != "" {
+			}
+
+			if diff := cmp.Diff(test.expected, actual, cmpOpts...); diff != "" {
 				t.Errorf("getPackageSources() mismatch (-want +got):\n%s", diff)
+			}
+			if diff := cmp.Diff(test.expectedMountOnly, actualMountOnly, cmpOpts...); diff != "" {
+				t.Errorf("getPackageSources() mountOnly mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -924,7 +1152,7 @@ func TestGetPackageSourcesError(t *testing.T) {
 
 			mockClient := testutils.NewTStorageClient(map[string]digest.Digest{}, test.configs)
 
-			_, err := getPackageSources(mockClient, test.stages, test.resolvedPullspecs)
+			_, _, err := getPackageSources(mockClient, test.stages, test.resolvedPullspecs)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
