@@ -450,7 +450,7 @@ func TestParse(t *testing.T) {
 					Base:   "quay.io/rhel:9",
 					Copies: []Copy{},
 					Mounts: []Mount{
-						{From: "quay.io/tools:1", Type: MountTypeExternal},
+						{From: "quay.io/tools:1", Type: MountTypeExternal, Source: "/bin/tool"},
 					},
 				},
 			},
@@ -471,7 +471,7 @@ func TestParse(t *testing.T) {
 					Base:   "scratch",
 					Copies: []Copy{},
 					Mounts: []Mount{
-						{From: "builder", Type: MountTypeBuilder},
+						{From: "builder", Type: MountTypeBuilder, Source: "/app"},
 					},
 				},
 			},
@@ -492,7 +492,56 @@ func TestParse(t *testing.T) {
 					Base:   "scratch",
 					Copies: []Copy{},
 					Mounts: []Mount{
-						{From: "0", Type: MountTypeBuilder},
+						{From: "0", Type: MountTypeBuilder, Source: "/app"},
+					},
+				},
+			},
+		},
+		"RUN --mount source and target defaults to root": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							FROM scratch
+							RUN --mount=type=bind,from=builder,target=/mnt ls /mnt`,
+			expected: []Stage{
+				{
+					Alias:  "builder",
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+				},
+				{
+					Alias:  FinalStage,
+					Base:   "scratch",
+					Copies: []Copy{},
+					Mounts: []Mount{
+						{From: "builder", Type: MountTypeBuilder, Source: "/"},
+					},
+				},
+			},
+		},
+		"RUN --mount destination= alias for target": {
+			containerfile: `FROM quay.io/rhel:9
+							RUN --mount=type=bind,from=quay.io/tools:1,destination=/mnt ls /mnt`,
+			expected: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{
+						{From: "quay.io/tools:1", Type: MountTypeExternal, Source: "/"},
+					},
+				},
+			},
+		},
+		"RUN --mount source= alias for src": {
+			containerfile: `FROM quay.io/rhel:9
+							RUN --mount=type=bind,from=quay.io/tools:1,source=/specific/dir,target=/mnt ls /mnt`,
+			expected: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{
+						{From: "quay.io/tools:1", Type: MountTypeExternal, Source: "/specific/dir"},
 					},
 				},
 			},

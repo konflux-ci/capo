@@ -59,6 +59,9 @@ type Mount struct {
 	// Type of the mount. Specifies whether it references a builder stage
 	// or an external image directly.
 	Type MountType
+	// Subdirectory of the source image/stage to mount. Defaults to "/".
+	// Corresponds to the source=/src= option in --mount.
+	Source string
 }
 
 // MountType classifies a RUN --mount reference by its source origin.
@@ -251,6 +254,18 @@ func isStageRef(ref string, stageNames []string) bool {
 	return false
 }
 
+// getOptionValue returns the value of the option with the given aliases.
+// If the option is not found, it returns an empty string and false.
+// Its input is expected to be in format "alias=value".
+func getOptionValue(rawOpt string, aliases... string) (string, bool) {
+	for _, alias := range aliases {
+		if val, ok := strings.CutPrefix(rawOpt, alias+"="); ok {
+			return val, true
+		}
+	}
+	return "", false
+}
+
 // parseMounts extracts Mount references from a RUN instruction's --mount flags.
 // Only mounts with a "from" option are returned. Uses the passed previous stage
 // names to classify whether the mount references a builder stage or an external image.
@@ -260,35 +275,66 @@ func parseMounts(node *parser.Node, env []string, stageNames []string) ([]Mount,
 		if !strings.HasPrefix(fl, "--mount=") {
 			continue
 		}
+		mount, err := parseMount(strings.TrimPrefix(fl, "--mount="), env, stageNames)
+		if err != nil {
+			return nil, err
+		}
+		if mount != nil {
+			mounts = append(mounts, *mount)
+		}
+	}
+	return mounts, nil
+}
 
-		mountOpts := strings.TrimPrefix(fl, "--mount=")
-		from := ""
-		for opt := range strings.SplitSeq(mountOpts, ",") {
-			if val, ok := strings.CutPrefix(opt, "from="); ok {
+// parseMount parses a single --mount option string (without the --mount= prefix)
+// and returns a Mount if it is a bind mount with a from reference, or nil otherwise.
+func parseMount(mountOpts string, env []string, stageNames []string) (*Mount, error) {
+	var from, source, buildahMountType string
+	for opt := range strings.SplitSeq(mountOpts, ",") {
+		if from == "" {
+			if val, ok := getOptionValue(opt, "from"); ok {
 				var err error
 				from, err = imagebuilder.ProcessWord(val, env)
 				if err != nil {
 					return nil, fmt.Errorf("%w: %w", ErrParse, err)
 				}
-				break
+				continue
 			}
 		}
-
-		if from == "" {
-			continue
+		if source == "" {
+			if val, ok := getOptionValue(opt, "source", "src"); ok {
+				source = val
+				continue
+			}
 		}
-
-		mountType := MountTypeBuilder
-		if !isStageRef(from, stageNames) {
-			mountType = MountTypeExternal
+		if buildahMountType == "" {
+			if val, ok := getOptionValue(opt, "type"); ok {
+				buildahMountType = val
+				continue
+			}
 		}
-
-		mounts = append(mounts, Mount{
-			From: from,
-			Type: mountType,
-		})
 	}
-	return mounts, nil
+
+	if from == "" || buildahMountType != "bind" {
+		return nil, nil
+	}
+
+	if source == "" {
+		source = "/"
+	} else {
+		source = filepath.Join("/", source)
+	}
+
+	mountType := MountTypeBuilder
+	if !isStageRef(from, stageNames) {
+		mountType = MountTypeExternal
+	}
+
+	return &Mount{
+		From:   from,
+		Type:   mountType,
+		Source: source,
+	}, nil
 }
 
 // normalizeSources normalizes the paths in the passed sources slice to absolute clean paths.
