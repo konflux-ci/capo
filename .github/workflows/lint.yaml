@@ -29,3 +29,11 @@ jobs:
       uses: golangci/golangci-lint-action@v8
       with:
         version: latest
+
+    - name: Validate AGENTS.md line count
+      run: |
+        lines=$(wc -l < AGENTS.md)
+        if [ "$lines" -gt 60 ]; then
+          echo "::error::AGENTS.md has $lines lines (max 60)"
+          exit 1
+        fi
