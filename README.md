@@ -57,6 +57,20 @@ curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install
 mage lint
 ```
 
+### Commit Messages
+
+This project enforces
+[Conventional Commits](https://www.conventionalcommits.org/) via
+[gitlint](https://jorisroovers.com/gitlint/) in CI. Commits must follow:
+
+```
+type(scope): description
+```
+
+- **Allowed types:** `chore`, `docs`, `feat`, `fix`, `refactor`, `style`, `test`, `revert`
+- **Scope** is optional (e.g. `fix(ISV-1234): resolve layer matching`)
+- **Title** max 72 characters, **body** max 88 characters per line
+
 ### Integration Tests
 
 Integration tests require buildah with `--save-stages --stage-labels` support
