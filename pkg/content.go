@@ -6,7 +6,6 @@ package capo
 
 import (
 	"archive/tar"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,15 +16,10 @@ import (
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/konflux-ci/capo/pkg/storageclient"
 	"go.podman.io/storage"
 	"go.podman.io/storage/pkg/archive"
 )
-
-type imageConfig struct {
-	Config struct {
-		Labels map[string]string `json:"Labels"`
-	} `json:"config"`
-}
 
 const MinBuildahVersion = "1.44.0"
 
@@ -45,6 +39,7 @@ var ErrMissingStageLabel = errors.New("intermediate image is missing io.buildah.
 // image for each stage.
 func getContent(
 	store storage.Store,
+	client storageclient.Client,
 	pkgSource packageSource,
 	builderContentPath string,
 	intermediateContentPath string,
@@ -55,7 +50,10 @@ func getContent(
 	}
 	img, _ := store.Image(imgId)
 
-	intermediate, err := getIntermediateContent(store, img, pkgSource.alias, pkgSource.sources, intermediateContentPath)
+	intermediate, err := getIntermediateContent(
+		store, client, img, pkgSource.alias, pkgSource.sources, intermediateContentPath,
+	)
+
 	if err != nil {
 		return err
 	}
@@ -206,6 +204,7 @@ func copyFile(src string, dest string) (err error) {
 // top layer and the builder base image top layer.
 func getIntermediateContent(
 	store storage.Store,
+	client storageclient.Client,
 	builderImage *storage.Image,
 	stageAlias string,
 	sources []string,
@@ -217,7 +216,7 @@ func getIntermediateContent(
 	}
 
 	// Find intermediate image using buildah stage labels
-	intermediateImage, found, err := findIntermediateImage(store, stageAlias)
+	intermediateImage, found, err := findIntermediateImage(store, client, stageAlias)
 	if err != nil {
 		return []string{}, fmt.Errorf("%w: failed to find intermediate image: %w", ErrStorage, err)
 	}
@@ -304,39 +303,16 @@ func saveDiff(
 	return included, nil
 }
 
-func getImageLabels(store storage.Store, img *storage.Image) (map[string]string, error) {
-	var configBlobName string
-	for _, name := range img.BigDataNames {
-		if strings.HasPrefix(name, "sha256:") {
-			configBlobName = name
-			break
-		}
-	}
-
-	if configBlobName == "" {
-		return nil, ErrNoConfigBlob
-	}
-
-	configData, err := store.ImageBigData(img.ID, configBlobName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get image config: %w", err)
-	}
-
-	var config imageConfig
-	if err := json.Unmarshal(configData, &config); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal image config: %w", err)
-	}
-
-	return config.Config.Labels, nil
-}
-
 // findIntermediateImage looks up an intermediate image by stage alias.
 // Iterates all unnamed images in the store, validates buildah version and
 // stage label presence on each, but defers errors until the full iteration
 // completes, so a valid match is returned even if other images in the
 // store are invalid. Returns all accumulated errors only if no match
 // is found.
-func findIntermediateImage(store storage.Store, stageAlias string) (*storage.Image, bool, error) {
+func findIntermediateImage(
+	store storage.Store, client storageclient.Client, stageAlias string,
+) (*storage.Image, bool, error) {
+
 	images, err := store.Images()
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to list images: %w", err)
@@ -348,13 +324,13 @@ func findIntermediateImage(store storage.Store, stageAlias string) (*storage.Ima
 			continue
 		}
 
-		labels, err := getImageLabels(store, &images[i])
+		cfg, err := client.GetImageConfig(images[i].ID)
 		if err != nil {
-			errs = append(errs, fmt.Errorf("getting labels for intermediate image %s: %w", images[i].ID, err))
+			errs = append(errs, fmt.Errorf("getting image config for intermediate image %s: %w", images[i].ID, err))
 			continue
 		}
 
-		if err := checkBuildahVersionFromImage(labels); err != nil {
+		if err := checkBuildahVersionFromImage(cfg.Config.Labels); err != nil {
 			errs = append(errs, fmt.Errorf(
 				"intermediate image %s: %w, "+
 					"ensure buildah >= %s is used for the build and consider using "+
@@ -364,12 +340,12 @@ func findIntermediateImage(store storage.Store, stageAlias string) (*storage.Ima
 			continue
 		}
 
-		stageName, hasStageLabel := labels["io.buildah.stage.name"]
+		stageName, hasStageLabel := cfg.Config.Labels["io.buildah.stage.name"]
 		if !hasStageLabel {
 			errs = append(errs, fmt.Errorf(
 				"intermediate image %s (buildah %s): %w, "+
 					"make sure to pass --save-stages --stage-labels to the buildah build command",
-				images[i].ID, labels["io.buildah.version"], ErrMissingStageLabel,
+				images[i].ID, cfg.Config.Labels["io.buildah.version"], ErrMissingStageLabel,
 			))
 			continue
 		}
