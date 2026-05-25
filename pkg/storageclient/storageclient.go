@@ -74,33 +74,33 @@ func NewBuildahClient(store storage.Store) Client {
 	}
 }
 
-// ResolveDigest looks up the given pullspec in the local storage and returns
-// its content digest in the form "sha256:<hex>".
-func (c *BuildahClient) ResolveDigest(pullspec string) (digest.Digest, error) {
-	id, err := c.store.Lookup(pullspec)
+// ResolveDigest looks up the given reference in the local storage and returns
+// its sha256 content digest. The reference can be the image's name or ID.
+func (c *BuildahClient) ResolveDigest(ref string) (digest.Digest, error) {
+	id, err := c.store.Lookup(ref)
 	if err != nil {
-		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
+		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, ref, err)
 	}
 
 	img, err := c.store.Image(id)
 	if err != nil {
-		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
+		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, ref, err)
 	}
 
 	return img.Digest, nil
 }
 
-// Get an OCIImageConfig struct for the passed pullspec via buildah's container
-// storage.
-func (c *BuildahClient) GetImageConfig(pullspec string) (OCIImageConfig, error) {
-	imgId, err := c.store.Lookup(pullspec)
+// Get an OCIImageConfig struct for the passed reference via buildah's container
+// storage. The reference can be the image's name or ID.
+func (c *BuildahClient) GetImageConfig(ref string) (OCIImageConfig, error) {
+	imgId, err := c.store.Lookup(ref)
 	if err != nil {
-		return OCIImageConfig{}, fmt.Errorf("%w %s: %w", ErrOCIImageConfig, pullspec, err)
+		return OCIImageConfig{}, fmt.Errorf("%w %s: %w", ErrOCIImageConfig, ref, err)
 	}
 
 	img, err := c.store.Image(imgId)
 	if err != nil {
-		return OCIImageConfig{}, fmt.Errorf("%w %s: %w", ErrOCIImageConfig, pullspec, err)
+		return OCIImageConfig{}, fmt.Errorf("%w %s: %w", ErrOCIImageConfig, ref, err)
 	}
 
 	var configBlobName string
@@ -112,17 +112,17 @@ func (c *BuildahClient) GetImageConfig(pullspec string) (OCIImageConfig, error) 
 	}
 
 	if configBlobName == "" {
-		return OCIImageConfig{}, fmt.Errorf("%w %s: %w", ErrOCIImageConfig, pullspec, err)
+		return OCIImageConfig{}, fmt.Errorf("%w %s: %w", ErrOCIImageConfig, ref, err)
 	}
 
 	configData, err := c.store.ImageBigData(img.ID, configBlobName)
 	if err != nil {
-		return OCIImageConfig{}, fmt.Errorf("%w %s: %w", ErrOCIImageConfig, pullspec, err)
+		return OCIImageConfig{}, fmt.Errorf("%w %s: %w", ErrOCIImageConfig, ref, err)
 	}
 
 	var config OCIImageConfig
 	if err := json.Unmarshal(configData, &config); err != nil {
-		return OCIImageConfig{}, fmt.Errorf("%w %s: %w", ErrOCIImageConfig, pullspec, err)
+		return OCIImageConfig{}, fmt.Errorf("%w %s: %w", ErrOCIImageConfig, ref, err)
 	}
 
 	return config, nil

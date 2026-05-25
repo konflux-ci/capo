@@ -120,7 +120,7 @@ func Scan(
 		return PackageMetadata{}, err
 	}
 	for _, pkgSource := range pkgSources {
-		stagePkgItems, err := scanSource(store, pkgSource)
+		stagePkgItems, err := scanSource(store, storageClient, pkgSource)
 		if err != nil {
 			return PackageMetadata{}, fmt.Errorf("failed to scan source %+v with error: %w", pkgSource, err)
 		}
@@ -131,7 +131,8 @@ func Scan(
 	return res, nil
 }
 
-// FIXME: docs
+// Map all pullspecs found in the containerfile to their current digests in
+// container storage.
 func getImageDigests(
 	storageClient storageclient.Client, stages []containerfile.Stage,
 ) (map[string]digest.Digest, error) {
@@ -168,6 +169,8 @@ func getImageDigests(
 	return res, nil
 }
 
+// Attach a digest to a pullspec while removing the tag. Can fail if the passed
+// pullspec or digest are not structurally valid.
 func attachDigest(pullspec string, dig digest.Digest) (string, error) {
 	ref, err := reference.ParseNamed(pullspec)
 	if err != nil {
@@ -368,6 +371,7 @@ func resolveRelativeDestination(cp containerfile.Copy, baseWorkdir string) strin
 // origins of packages.
 func scanSource(
 	store storage.Store,
+	client storageclient.Client,
 	pkgSource packageSource,
 ) (_ []PackageMetadataItem, err error) {
 	// builder content is content that is present in a builder stage base image
@@ -400,7 +404,7 @@ func scanSource(
 		}()
 	}
 
-	err = getContent(store, pkgSource, builderContentPath, intermediateContentPath)
+	err = getContent(store, client, pkgSource, builderContentPath, intermediateContentPath)
 	if err != nil {
 		return nil, err
 	}
