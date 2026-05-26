@@ -1543,8 +1543,7 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		"[Numeric index COPY --from] COPY --from with numeric index in final stage": {
-			SkipTestReason: "[Priority: medium/high] COPY --from=0 resolved as pullspec instead of stage index when stage has alias (fails with 'could not find resolved pullspec')",
+		"[Numeric index COPY --from] COPY --from with numeric index in final stage (stage has alias)": {
 			TestImage: BuildDefinition{
 				Tag: "test-numeric-copy-from-final",
 				ContainerfileContent: `FROM localhost/numfinal-base:latest AS builder
@@ -1575,8 +1574,7 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		"[Numeric index COPY --from] COPY --from with numeric index in builder stage": {
-			SkipTestReason: "[Priority: high] COPY --from=0 in builder stage causes nil pointer panic in traceSource when stage has alias (same as in External COPY in builder stage... test)",
+		"[Numeric index COPY --from] COPY --from with numeric index in builder stage (stages have alias)": {
 			TestImage: BuildDefinition{
 				Tag: "test-numeric-copy-from-builder",
 				ContainerfileContent: `FROM localhost/numbuilder-base1:latest AS builder1
@@ -1588,7 +1586,7 @@ func TestIntegration(t *testing.T) {
 										COPY go_text.mod /untracked/b2/go.mod
 
 										FROM scratch
-										COPY --from=builder2 /forwarded /forwarded`,
+										COPY --from=1 /forwarded /forwarded`,
 				ContextDirectory: "../testdata/image_content",
 			},
 			BuilderImages: []BuildDefinition{

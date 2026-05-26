@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/konflux-ci/capo/internal/sbom"
@@ -208,6 +209,9 @@ func getPackageSources(
 	for i := range stages[:len(stages)-1] {
 		st := &stages[i]
 		aliasToStage[st.Alias] = st
+		// also map numeric index so COPY --from=<index> resolves
+		// correctly even when stage aliases are present
+		aliasToStage[strconv.Itoa(i)] = st
 	}
 
 	// mapping of bases used in the containerfile to their initial working
