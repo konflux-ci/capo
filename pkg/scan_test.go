@@ -877,6 +877,96 @@ func TestGetPackageSources(t *testing.T) {
 				},
 			},
 		},
+		"numeric index COPY --from in final stage with aliased stages": {
+			stages: []containerfile.Stage{
+				{
+					Alias:  "builder",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
+				},
+				{
+					Alias: containerfile.FinalStage,
+					Base:  "scratch",
+					Copies: []containerfile.Copy{
+						{
+							From:        "0",
+							Sources:     []string{"/usr/bin/app"},
+							Destination: "/usr/bin/app",
+							Type:        containerfile.CopyTypeBuilder,
+						},
+					},
+				},
+			},
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("aaa111"),
+			},
+			configs: map[string]storageclient.OCIImageConfig{
+				"docker.io/library/fedora:latest": configWithWorkdir("/"),
+			},
+			expected: []packageSource{
+				{
+					alias:      "builder",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("aaa111")),
+					sources:    []string{"/usr/bin/app"},
+				},
+			},
+		},
+		"numeric index COPY --from in builder stage with aliased stages": {
+			stages: []containerfile.Stage{
+				{
+					Alias:  "builder1",
+					Base:   "docker.io/library/fedora:latest",
+					Copies: []containerfile.Copy{},
+				},
+				{
+					Alias: "builder2",
+					Base:  "docker.io/alpine/helm:latest",
+					Copies: []containerfile.Copy{
+						{
+							From:        "0",
+							Sources:     []string{"/content"},
+							Destination: "/forwarded",
+							Type:        containerfile.CopyTypeBuilder,
+						},
+					},
+				},
+				{
+					Alias: containerfile.FinalStage,
+					Base:  "scratch",
+					Copies: []containerfile.Copy{
+						{
+							From:        "builder2",
+							Sources:     []string{"/forwarded"},
+							Destination: "/forwarded",
+							Type:        containerfile.CopyTypeBuilder,
+						},
+					},
+				},
+			},
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("bbb222"),
+				"docker.io/alpine/helm:latest":    testDigest("ccc333"),
+			},
+			configs: map[string]storageclient.OCIImageConfig{
+				"docker.io/library/fedora:latest": configWithWorkdir("/"),
+				"docker.io/alpine/helm:latest":    configWithWorkdir("/"),
+			},
+			expected: []packageSource{
+				{
+					alias:      "builder1",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("bbb222")),
+					sources:    []string{"/content"},
+				},
+				{
+					alias:      "builder2",
+					pullspec:   "docker.io/alpine/helm:latest",
+					digestBase: "docker.io/alpine/helm@" + string(testDigest("ccc333")),
+					sources:    []string{},
+				},
+			},
+		},
 	}
 
 	for name, test := range tests {
