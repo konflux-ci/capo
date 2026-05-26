@@ -97,8 +97,23 @@ func IntegrationTest() error {
 		"unshare",
 		"go",
 		"test",
-		"-v",
 		"-count=1", // disable test caching
+		"-tags=integration,exclude_graphdriver_btrfs",
+		"./pkg",
+	)
+}
+
+// Runs integration tests with coverage profiling and writes coverage-integration.out.
+func IntegrationCoverage() error {
+	return sh.RunV(
+		"buildah",
+		"unshare",
+		"go",
+		"test",
+		"-count=1",
+		"-coverprofile=coverage-integration.out",
+		"-coverpkg=./...",
+		"-covermode=atomic",
 		"-tags=integration,exclude_graphdriver_btrfs",
 		"./pkg",
 	)
