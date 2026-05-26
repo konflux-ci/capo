@@ -71,6 +71,12 @@ type(scope): description
 - **Scope** is optional (e.g. `fix(ISV-1234): resolve layer matching`)
 - **Title** max 72 characters, **body** max 88 characters per line
 
+To validate your commits locally before pushing:
+```sh
+pip install gitlint
+gitlint --commits origin/main..HEAD
+```
+
 ### Integration Tests
 
 Integration tests require buildah with `--save-stages --stage-labels` support
