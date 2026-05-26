@@ -8,7 +8,9 @@ on:
 jobs:
   integration:
     runs-on: ubuntu-latest
-    
+    permissions:
+      id-token: write
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
@@ -39,5 +41,13 @@ jobs:
     - name: Build custom buildah with intermediate image labeling support
       run: mage BuildCustomBuildah
 
-    - name: Run integration tests
-      run: mage IntegrationTest
+    - name: Run integration tests with coverage
+      run: mage IntegrationCoverage
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        use_oidc: true
+        flags: integration-tests
+        files: coverage-integration.out
+        fail_ci_if_error: false

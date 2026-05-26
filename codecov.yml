@@ -19,9 +19,12 @@ coverage:
 ignore:
   - "testdata/**"
   - "docs/**"
+  - "internal/testutils/**"
 
 flags:
   unit-tests:
+    carryforward: true
+  integration-tests:
     carryforward: true
 
 comment:
