@@ -35,3 +35,6 @@ capo
 
 # Custom buildah binary for integration tests
 testdata/bin/buildah
+
+# AgentReady assessment reports
+.agentready/
