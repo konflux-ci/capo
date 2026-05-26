@@ -16,9 +16,32 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/uuid"
 	"github.com/konflux-ci/capo/pkg/containerfile"
+	"github.com/konflux-ci/capo/pkg/storageclient"
 	"github.com/magefile/mage/sh"
 	"go.podman.io/storage"
 )
+
+// splitFilesystemTransport splits a filesystem transport reference into the
+// transport prefix and the remaining path+reference. For example
+// "oci-archive:image.tar:latest" returns ("oci-archive:", "image.tar:latest").
+// Returns ("", pullspec) if the pullspec does not use a filesystem transport.
+func splitFilesystemTransport(pullspec string) (transport, rest string) {
+	for _, prefix := range []string{"oci-archive:", "docker-archive:", "oci:", "dir:"} {
+		if after, ok := strings.CutPrefix(pullspec, prefix); ok {
+			return prefix, after
+		}
+	}
+	return "", pullspec
+}
+
+// filesystemTransportPath extracts the local file/directory path from a
+// filesystem transport reference. For example "oci-archive:image.tar:latest"
+// returns "image.tar".
+func filesystemTransportPath(pullspec string) string {
+	_, rest := splitFilesystemTransport(pullspec)
+	path, _, _ := strings.Cut(rest, ":")
+	return path
+}
 
 // BuildDefinition describes a container image to build for a test.
 type BuildDefinition struct {
@@ -118,13 +141,56 @@ func (testCase *TestCase) run(t *testing.T, store storage.Store, buildahBinary s
 
 // buildImage builds a container image from a containerfile using buildah.
 // Skips building if the image already exists and isBuilder is true.
+//
+// When Tag uses a filesystem transport (e.g. "oci-archive:base.tar:latest"),
+// the image is built with a temporary tag, pushed to a local file/directory
+// inside the ContextDirectory using the original transport, and the temporary
+// image is removed from storage. This is needed because buildah requires
+// filesystem transport paths to be relative to the build context.
 func (buildDef *BuildDefinition) buildImage(store storage.Store, buildahBinary string, isBuilder bool) (err error) {
 	tag := buildDef.Tag
+
+	if storageclient.IsFilesystemTransport(tag) {
+		return buildDef.buildFilesystemImage(store, buildahBinary)
+	}
 
 	if _, err := store.Lookup(tag); err == nil && isBuilder {
 		return nil
 	}
 
+	return buildDef.runBuildah(buildahBinary, tag, !isBuilder)
+}
+
+// buildFilesystemImage builds a temporary image from ContainerfileContent and
+// pushes it to a local file/directory inside ContextDirectory using the
+// transport from the Tag (e.g. "oci-archive:", "docker-archive:", "oci:", "dir:").
+func (buildDef *BuildDefinition) buildFilesystemImage(store storage.Store, buildahBinary string) error {
+	transport, rest := splitFilesystemTransport(buildDef.Tag)
+	localPath := filesystemTransportPath(buildDef.Tag)
+	fullPath := filepath.Join(buildDef.ContextDirectory, localPath)
+
+	if _, err := os.Stat(fullPath); err == nil {
+		return nil
+	}
+
+	tmpTag := "tmp-" + uuid.New().String()
+	if err := buildDef.runBuildah(buildahBinary, tmpTag, false); err != nil {
+		return err
+	}
+	defer func() {
+		if id, err := store.Lookup(tmpTag); err == nil {
+			store.DeleteImage(id, true)
+		}
+	}()
+
+	pushDest := transport + fullPath
+	if ref := strings.TrimPrefix(rest, localPath); ref != "" {
+		pushDest += ref
+	}
+	return sh.RunV(buildahBinary, "push", tmpTag, pushDest)
+}
+
+func (buildDef *BuildDefinition) runBuildah(buildahBinary, tag string, saveStages bool) (err error) {
 	// Create a temporary file for the Containerfile content
 	tmpFile, err := os.CreateTemp("", "Containerfile-*.tmp")
 	if err != nil {
@@ -152,7 +218,7 @@ func (buildDef *BuildDefinition) buildImage(store storage.Store, buildahBinary s
 		"--tag",
 		tag,
 	}
-	if !isBuilder {
+	if saveStages {
 		args = append(args, "--save-stages", "--stage-labels")
 	}
 	args = append(args, buildDef.ContextDirectory)
@@ -199,6 +265,13 @@ func (testCase *TestCase) cleanUp(t *testing.T, store storage.Store) error {
 }
 
 func (buildDef *BuildDefinition) cleanUp(t *testing.T, store storage.Store) error {
+	if storageclient.IsFilesystemTransport(buildDef.Tag) {
+		localPath := filesystemTransportPath(buildDef.Tag)
+		fullPath := filepath.Join(buildDef.ContextDirectory, localPath)
+		t.Logf("Cleaning up filesystem transport artifact %s", fullPath)
+		os.RemoveAll(fullPath)
+		return nil
+	}
 	t.Logf("Cleaning up builder image %s", buildDef.Tag)
 	imageID, err := store.Lookup(buildDef.Tag)
 	if err != nil {
@@ -220,6 +293,9 @@ func (buildDef *BuildDefinition) cleanUp(t *testing.T, store storage.Store) erro
 // - Adding `localhost/` prefix if the tag doesn't contain a registry URL (no `/`)
 // - Adding `:latest` suffix if the tag doesn't contain a tag (no `:`)
 func normalizeTag(tag string) string {
+	if storageclient.IsSpecialBase(tag) {
+		return tag
+	}
 	if tag == "" {
 		tag = uuid.New().String()
 	}
@@ -1659,7 +1735,6 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[FROM special] FROM scratch as builder base": {
-			SkipTestReason: "[Priority: high] scratch is not handled in resolvePullspecs",
 			TestImage: BuildDefinition{
 				Tag: "test-from-scratch-builder",
 				ContainerfileContent: `FROM scratch AS builder
@@ -1674,29 +1749,84 @@ func TestIntegration(t *testing.T) {
 					{
 						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
 						OriginType: "intermediate",
-						Pullspec:   "scratch@sha256:dummy",
+						Pullspec:   "scratch",
 						StageAlias: "builder",
 					},
 				},
 			},
 		},
-		"[FROM special] FROM oci:archive as builder base": {
-			SkipTestReason: "[Priority: high] oci:archive transport not handled in resolvePullspecs",
+		// All content from oci-archive is treated as intermediate content,
+		// even if it is from a builder stage. That is because all oci-archive
+		// bases are local and unpullable.
+		"[FROM special] FROM oci-archive as builder base": {
 			TestImage: BuildDefinition{
 				Tag: "test-from-oci-archive-builder",
-				ContainerfileContent: `FROM oci:archive:/path/to/base.ociarchive AS builder
+				ContainerfileContent: `FROM oci-archive:test-base.ociarchive AS builder
 										COPY go_uuid.mod /content/go.mod
 
 										FROM scratch
-										COPY --from=builder /content /content`,
+										COPY --from=builder /content /content
+										COPY --from=builder /opt /opt`,
 				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "oci-archive:test-base.ociarchive",
+					ContainerfileContent: `FROM scratch
+											COPY go2.mod /tmp/dummy
+											COPY go_syft.mod /opt/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
 			},
 			ExpectedResult: PackageMetadata{
 				Packages: []PackageMetadataItem{
 					{
 						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
 						OriginType: "intermediate",
-						Pullspec:   "oci:archive:/path/to/base.ociarchive",
+						Pullspec:   "oci-archive:test-base.ociarchive",
+						StageAlias: "builder",
+					},
+					{
+						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
+						OriginType: "intermediate",
+						Pullspec:   "oci-archive:test-base.ociarchive",
+						StageAlias: "builder",
+					},
+				},
+			},
+		},
+		"[FROM special] FROM docker:// transport as builder base": {
+			TestImage: BuildDefinition{
+				Tag: "test-from-docker-transport",
+				ContainerfileContent: `FROM docker://localhost/docker-transport-base:latest AS builder
+										COPY go_uuid.mod /content/go.mod
+
+										FROM scratch
+										COPY --from=builder /content /content
+										COPY --from=builder /C /content`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "localhost/docker-transport-base:latest",
+					ContainerfileContent: `FROM scratch
+											COPY go2.mod /base/go.mod
+											COPY go_syft.mod /C/Users/Shadowman/Desktop/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/docker-transport-base@sha256:dummy",
+						StageAlias: "builder",
+					},
+					{
+						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
+						OriginType: "builder",
+						Pullspec:   "localhost/docker-transport-base@sha256:dummy",
 						StageAlias: "builder",
 					},
 				},

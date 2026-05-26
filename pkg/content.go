@@ -44,33 +44,54 @@ func getContent(
 	builderContentPath string,
 	intermediateContentPath string,
 ) error {
-	imgId, err := store.Lookup(pkgSource.pullspec)
-	if err != nil {
-		return fmt.Errorf("%w: %q", ErrImageNotFound, pkgSource.pullspec)
-	}
-	img, _ := store.Image(imgId)
+	isSpecialBase := storageclient.IsSpecialBase(pkgSource.pullspec)
+	var builderImage *storage.Image
 
+	if !isSpecialBase {
+		// Special bases are not pullable or resolvable with Lookup
+		imgId, err := store.Lookup(storageclient.StripTransport(pkgSource.pullspec))
+		if err != nil {
+			return fmt.Errorf("%w: %q", ErrImageNotFound, pkgSource.pullspec)
+		}
+		builderImage, err = store.Image(imgId)
+		if err != nil {
+			return fmt.Errorf("%w: %q", ErrImageNotFound, pkgSource.pullspec)
+		}
+	}
+
+	// Special bases will have builderImage set as nil
 	intermediate, err := getIntermediateContent(
-		store, client, img, pkgSource.alias, pkgSource.sources, intermediateContentPath,
+		store,
+		client,
+		builderImage,
+		pkgSource.alias,
+		pkgSource.sources,
+		intermediateContentPath,
 	)
 
 	if err != nil {
 		return err
 	}
+	logContent("intermediate", intermediate, pkgSource.pullspec)
 
-	if len(intermediate) == 0 {
-		log.Printf("Found no intermediate content for %s.", pkgSource.pullspec)
-	} else {
-		log.Printf("Included intermediate content %+v for %s.", intermediate, pkgSource.pullspec)
+	if !isSpecialBase {
+		// Only standard bases have builder content. All content in special bases is treated as intermediate.
+		builderContent, err := getImageContent(store, builderImage, pkgSource.sources, builderContentPath)
+		if err != nil {
+			return err
+		}
+		logContent("builder", builderContent, pkgSource.pullspec)
 	}
-
-	builder, err := getImageContent(store, img, pkgSource.sources, builderContentPath)
-	if err != nil {
-		return err
-	}
-	log.Printf("Included builder content %+v for %s.", builder, pkgSource.pullspec)
 
 	return nil
+}
+
+func logContent(kind string, content []string, pullspec string) {
+	if len(content) == 0 {
+		log.Printf("Found no %s content for %s.", kind, pullspec)
+	} else {
+		log.Printf("Included %s content %+v for %s.", kind, content, pullspec)
+	}
 }
 
 // IsPathUnderPattern reports whether path matches pattern exactly (via filepath.Match)
@@ -202,6 +223,11 @@ func copyFile(src string, dest string) (err error) {
 // Uses buildah stage labels (io.buildah.stage.name) to find the intermediate
 // image for the given stage, then calculates a diff between the intermediate
 // top layer and the builder base image top layer.
+//
+// When builderImage is nil (special bases like scratch or oci-archive), mounts
+// the intermediate image and reads all matching content. Filesystem-transport
+// bases are local files with non-pullable identifiers, so all their content
+// is treated uniformly as intermediate.
 func getIntermediateContent(
 	store storage.Store,
 	client storageclient.Client,
@@ -210,11 +236,6 @@ func getIntermediateContent(
 	sources []string,
 	path string,
 ) ([]string, error) {
-	builderLayer, err := store.Layer(builderImage.TopLayer)
-	if err != nil {
-		return []string{}, fmt.Errorf("%w: failed to get builder layer: %w", ErrStorage, err)
-	}
-
 	// Find intermediate image using buildah stage labels
 	intermediateImage, found, err := findIntermediateImage(store, client, stageAlias)
 	if err != nil {
@@ -223,6 +244,16 @@ func getIntermediateContent(
 	if !found {
 		// No intermediate image for this stage
 		return []string{}, nil
+	}
+
+	if builderImage == nil {
+		// Scratch or unresolvable (special) bases
+		return getImageContent(store, intermediateImage, sources, path)
+	}
+
+	builderLayer, err := store.Layer(builderImage.TopLayer)
+	if err != nil {
+		return []string{}, fmt.Errorf("%w: failed to get builder layer: %w", ErrStorage, err)
 	}
 
 	interLayer, err := store.Layer(intermediateImage.TopLayer)

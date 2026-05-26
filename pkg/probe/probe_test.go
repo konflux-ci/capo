@@ -167,9 +167,9 @@ func TestProbe(t *testing.T) {
 				ExtraImages: []Image{},
 			},
 		},
-		"oci:archive base is excluded from base images": {
+		"oci-archive base is excluded from base images": {
 			containerfile: `FROM quay.io/rhel:9 as builder
-							FROM oci:archive:/path/to/archive
+							FROM oci-archive:/path/to/archive
 							COPY --from=builder /app /app`,
 			opts: ProbeOpts{
 				Tag:    "quay.io/image:latest",
