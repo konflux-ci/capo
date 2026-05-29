@@ -1,7 +1,8 @@
 # Capo
 
 Capo is a program and library that traces the origin of content copied from
-builder stages to the final built image (by `COPY --from=stage_alias`) for multi-stage container builds. After a
+builder stages to the final built image (by `COPY --from=stage_alias`) for
+multi-stage container builds. After a
 [buildah](https://github.com/containers/buildah) build, it parses the
 Containerfile, inspects all participating images in the local buildah image
 store (builder base images, their intermediate images, and extra images from
@@ -38,11 +39,12 @@ Part of the [Konflux CI](https://github.com/konflux-ci) project.
 
 Install capo:
 ```sh
-go install github.com/konflux-ci/capo/cmd/capo@latest
+go install -tags=exclude_graphdriver_btrfs github.com/konflux-ci/capo/cmd/capo@latest
 ```
 
 Build your image with buildah (note `--save-stages --stage-labels` flags
-required for capo to find intermediate images and pair them with related builder base images) and run capo under
+required for capo to find intermediate images and pair them with related
+builder base images) and run capo under
 `buildah unshare`:
 ```sh
 buildah build --save-stages --stage-labels -f Containerfile
