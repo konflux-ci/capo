@@ -37,6 +37,7 @@ Buildprobe (`cmd/buildprobe/`) is a separate CLI tool in this repo. It parses a 
 | Unit tests | `pkg/*_test.go`, `pkg/containerfile/*_test.go`, `pkg/buildargs/*_test.go`, `pkg/probe/*_test.go` |
 | Integration tests | `pkg/integration_test.go` (builds real images, needs buildah) |
 | Build orchestration | `magefile.go` |
+| Design intent | `docs/design/design.md` (invariants, rationale) |
 
 ## Architecture hooks
 
