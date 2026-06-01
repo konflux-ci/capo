@@ -262,35 +262,54 @@ func parseMounts(node *parser.Node, env []string, stageNames []string) ([]Mount,
 		if !strings.HasPrefix(fl, "--mount=") {
 			continue
 		}
+		mount, err := parseMount(strings.TrimPrefix(fl, "--mount="), env, stageNames)
+		if err != nil {
+			return nil, err
+		}
+		if mount != nil {
+			mounts = append(mounts, *mount)
+		}
+	}
+	return mounts, nil
+}
 
-		mountOpts := strings.TrimPrefix(fl, "--mount=")
-		from := ""
-		for opt := range strings.SplitSeq(mountOpts, ",") {
+// parseMount parses a single --mount option string (without the --mount= prefix)
+// and returns a Mount if it is a bind mount with a from reference, or nil otherwise.
+func parseMount(mountOpts string, env []string, stageNames []string) (*Mount, error) {
+	var from, buildahMountType string
+	for opt := range strings.SplitSeq(mountOpts, ",") {
+		if from == "" {
+
 			if val, ok := strings.CutPrefix(opt, "from="); ok {
 				var err error
 				from, err = imagebuilder.ProcessWord(val, env)
 				if err != nil {
 					return nil, fmt.Errorf("%w: %w", ErrParse, err)
 				}
-				break
+				continue
 			}
 		}
-
-		if from == "" {
-			continue
+		if buildahMountType == "" {
+			if val, ok := strings.CutPrefix(opt, "type="); ok {
+				buildahMountType = val
+				continue
+			}
 		}
-
-		mountType := MountTypeBuilder
-		if !isStageRef(from, stageNames) {
-			mountType = MountTypeExternal
-		}
-
-		mounts = append(mounts, Mount{
-			From: from,
-			Type: mountType,
-		})
 	}
-	return mounts, nil
+
+	if from == "" || buildahMountType != "bind" {
+		return nil, nil
+	}
+
+	mountType := MountTypeBuilder
+	if !isStageRef(from, stageNames) {
+		mountType = MountTypeExternal
+	}
+
+	return &Mount{
+		From: from,
+		Type: mountType,
+	}, nil
 }
 
 // normalizeSources normalizes the paths in the passed sources slice to absolute clean paths.
