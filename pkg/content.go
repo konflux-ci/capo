@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -37,9 +36,7 @@ var ErrMissingStageLabel = errors.New("intermediate image is missing io.buildah.
 //
 // Uses buildah stage labels (io.buildah.stage.name) to identify intermediate
 // image for each stage.
-func getContent(
-	store storage.Store,
-	client storageclient.Client,
+func (s *Scanner) getContent(
 	pkgSource packageSource,
 	builderContentPath string,
 	intermediateContentPath string,
@@ -49,20 +46,18 @@ func getContent(
 
 	if !isSpecialBase {
 		// Special bases are not pullable or resolvable with Lookup
-		imgId, err := store.Lookup(storageclient.StripTransport(pkgSource.pullspec))
+		imgId, err := s.store.Lookup(storageclient.StripTransport(pkgSource.pullspec))
 		if err != nil {
 			return fmt.Errorf("%w: %q", ErrImageNotFound, pkgSource.pullspec)
 		}
-		builderImage, err = store.Image(imgId)
+		builderImage, err = s.store.Image(imgId)
 		if err != nil {
 			return fmt.Errorf("%w: %q", ErrImageNotFound, pkgSource.pullspec)
 		}
 	}
 
 	// Special bases will have builderImage set as nil
-	intermediate, err := getIntermediateContent(
-		store,
-		client,
+	intermediate, err := s.getIntermediateContent(
 		builderImage,
 		pkgSource.alias,
 		pkgSource.sources,
@@ -72,25 +67,25 @@ func getContent(
 	if err != nil {
 		return err
 	}
-	logContent("intermediate", intermediate, pkgSource.pullspec)
+	s.logContent("intermediate", intermediate, pkgSource.pullspec)
 
 	if !isSpecialBase {
 		// Only standard bases have builder content. All content in special bases is treated as intermediate.
-		builderContent, err := getImageContent(store, builderImage, pkgSource.sources, builderContentPath)
+		builderContent, err := s.getImageContent(builderImage, pkgSource.sources, builderContentPath)
 		if err != nil {
 			return err
 		}
-		logContent("builder", builderContent, pkgSource.pullspec)
+		s.logContent("builder", builderContent, pkgSource.pullspec)
 	}
 
 	return nil
 }
 
-func logContent(kind string, content []string, pullspec string) {
+func (s *Scanner) logContent(kind string, content []string, pullspec string) {
 	if len(content) == 0 {
-		log.Printf("Found no %s content for %s.", kind, pullspec)
+		s.logger.Debug("found no content", "kind", kind, "pullspec", pullspec)
 	} else {
-		log.Printf("Included %s content %+v for %s.", kind, content, pullspec)
+		s.logger.Debug("included content", "kind", kind, "content", content, "pullspec", pullspec)
 	}
 }
 
@@ -134,19 +129,18 @@ func includes(sources []string, path string) bool {
 	return false
 }
 
-func getImageContent(
-	store storage.Store,
+func (s *Scanner) getImageContent(
 	image *storage.Image,
 	sources []string,
 	contentPath string,
 ) (included []string, err error) {
-	mountPath, err := store.MountImage(image.ID, []string{}, "")
+	mountPath, err := s.store.MountImage(image.ID, []string{}, "")
 	if err != nil {
 		return included, fmt.Errorf("%w: %w", ErrImageMount, err)
 	}
 
 	defer func() {
-		if _, unmountErr := store.UnmountImage(image.ID, false); unmountErr != nil {
+		if _, unmountErr := s.store.UnmountImage(image.ID, false); unmountErr != nil {
 			err = fmt.Errorf("%w: failed to unmount image: %w", ErrStorage, unmountErr)
 		}
 	}()
@@ -228,16 +222,14 @@ func copyFile(src string, dest string) (err error) {
 // the intermediate image and reads all matching content. Filesystem-transport
 // bases are local files with non-pullable identifiers, so all their content
 // is treated uniformly as intermediate.
-func getIntermediateContent(
-	store storage.Store,
-	client storageclient.Client,
+func (s *Scanner) getIntermediateContent(
 	builderImage *storage.Image,
 	stageAlias string,
 	sources []string,
 	path string,
 ) ([]string, error) {
 	// Find intermediate image using buildah stage labels
-	intermediateImage, found, err := findIntermediateImage(store, client, stageAlias)
+	intermediateImage, found, err := s.findIntermediateImage(stageAlias)
 	if err != nil {
 		return []string{}, fmt.Errorf("%w: failed to find intermediate image: %w", ErrStorage, err)
 	}
@@ -248,20 +240,20 @@ func getIntermediateContent(
 
 	if builderImage == nil {
 		// Scratch or unresolvable (special) bases
-		return getImageContent(store, intermediateImage, sources, path)
+		return s.getImageContent(intermediateImage, sources, path)
 	}
 
-	builderLayer, err := store.Layer(builderImage.TopLayer)
+	builderLayer, err := s.store.Layer(builderImage.TopLayer)
 	if err != nil {
 		return []string{}, fmt.Errorf("%w: failed to get builder layer: %w", ErrStorage, err)
 	}
 
-	interLayer, err := store.Layer(intermediateImage.TopLayer)
+	interLayer, err := s.store.Layer(intermediateImage.TopLayer)
 	if err != nil {
 		return []string{}, fmt.Errorf("%w: failed to get intermediate layer: %w", ErrStorage, err)
 	}
 
-	included, err := saveDiff(store, path, interLayer.ID, builderLayer.ID, sources)
+	included, err := s.saveDiff(path, interLayer.ID, builderLayer.ID, sources)
 	if err != nil {
 		return []string{}, err
 	}
@@ -269,8 +261,7 @@ func getIntermediateContent(
 	return included, nil
 }
 
-func saveDiff(
-	store storage.Store,
+func (s *Scanner) saveDiff(
 	dest string,
 	layerId string,
 	parentId string,
@@ -281,7 +272,7 @@ func saveDiff(
 		Compression: &compression,
 	}
 
-	diff, err := store.Diff(parentId, layerId, &opts)
+	diff, err := s.store.Diff(parentId, layerId, &opts)
 	if err != nil {
 		return []string{}, fmt.Errorf("%w: failed to compute layer diff: %w", ErrStorage, err)
 	}
@@ -340,11 +331,11 @@ func saveDiff(
 // completes, so a valid match is returned even if other images in the
 // store are invalid. Returns all accumulated errors only if no match
 // is found.
-func findIntermediateImage(
-	store storage.Store, client storageclient.Client, stageAlias string,
+func (s *Scanner) findIntermediateImage(
+	stageAlias string,
 ) (*storage.Image, bool, error) {
 
-	images, err := store.Images()
+	images, err := s.store.Images()
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to list images: %w", err)
 	}
@@ -355,7 +346,7 @@ func findIntermediateImage(
 			continue
 		}
 
-		cfg, err := client.GetImageConfig(images[i].ID)
+		cfg, err := s.sclient.GetImageConfig(images[i].ID)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("getting image config for intermediate image %s: %w", images[i].ID, err))
 			continue
@@ -382,7 +373,7 @@ func findIntermediateImage(
 		}
 
 		if stageName == stageAlias {
-			log.Printf("Found intermediate image %s for stage %q.", images[i].ID, stageAlias)
+			s.logger.Debug("found intermediate image", "imageID", images[i].ID, "stage", stageAlias)
 			return &images[i], true, nil
 		}
 	}
@@ -393,10 +384,11 @@ func findIntermediateImage(
 			stageAlias, len(errs), errors.Join(errs...),
 		)
 	}
-	log.Printf("No intermediate image found for stage %q. "+
-		"This is expected if the stage has no filesystem-changing instructions. "+
-		"If the stage does have such instructions, ensure the build was executed "+
-		"with --save-stages --stage-labels flags.", stageAlias)
+	s.logger.Debug("no intermediate image found for stage",
+		"stage", stageAlias,
+		"hint", "expected if the stage has no filesystem-changing instructions; "+
+			"if it does, ensure the build used --save-stages --stage-labels flags",
+	)
 	return nil, false, nil
 }
 
