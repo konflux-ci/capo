@@ -1830,192 +1830,6 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		"[RUN --mount] --mount from external image in builder stage": {
-			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
-			TestImage: BuildDefinition{
-				Tag: "test-mount-external-in-builder",
-				ContainerfileContent: `FROM localhost/mount-ext-base:latest AS builder
-										COPY go_exp.mod /opt/app3/go.mod
-										RUN --mount=type=bind,from=localhost/mount-ext-source:latest,target=/mnt mkdir -p /opt/app2 && cp /mnt/go.mod /opt/app2/go.mod
-
-										FROM scratch
-										COPY --from=builder /opt /opt`,
-				ContextDirectory: "../testdata/image_content",
-			},
-			BuilderImages: []BuildDefinition{
-				{
-					Tag: "localhost/mount-ext-base:latest",
-					ContainerfileContent: `FROM docker.io/library/alpine:latest
-											COPY go_syft.mod /opt/app1/go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-				{
-					Tag: "localhost/mount-ext-source:latest",
-					ContainerfileContent: `FROM scratch
-											COPY go_uuid.mod /go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-			},
-			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/mount-ext-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "external",
-						Pullspec:   "localhost/mount-ext-source@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/mount-ext-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
-			},
-		},
-		"[RUN --mount] --mount from builder stage in another builder stage": {
-			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
-			TestImage: BuildDefinition{
-				Tag: "test-mount-builder-stage",
-				ContainerfileContent: `FROM localhost/mount-stage-base:latest AS provider
-										COPY go_uuid.mod /provided/go.mod
-
-										FROM localhost/mount-stage-base2:latest AS consumer
-										COPY go_exp.mod /opt/app3/go.mod
-										RUN --mount=type=bind,from=provider,target=/mnt mkdir -p /opt/app2 && cp /mnt/provided/go.mod /opt/app2/go.mod
-
-										FROM scratch
-										COPY --from=consumer /opt /opt`,
-				ContextDirectory: "../testdata/image_content",
-			},
-			BuilderImages: []BuildDefinition{
-				{
-					Tag: "localhost/mount-stage-base:latest",
-					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/app0/go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-				{
-					Tag: "localhost/mount-stage-base2:latest",
-					ContainerfileContent: `FROM docker.io/library/alpine:latest
-											COPY go_sync.mod /opt/app1/go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-			},
-			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/golang.org/x/sync@v0.8.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/mount-stage-base2@sha256:dummy",
-						StageAlias: "consumer",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/mount-stage-base@sha256:dummy",
-						StageAlias: "provider",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/mount-stage-base2@sha256:dummy",
-						StageAlias: "consumer",
-					},
-				},
-			},
-		},
-		"[RUN --mount] --mount from external image in final stage": {
-			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
-			TestImage: BuildDefinition{
-				Tag: "test-mount-external-final",
-				ContainerfileContent: `FROM localhost/mount-ext-final-base:latest AS builder
-										COPY go_exp.mod /opt/app3/go.mod
-
-										FROM docker.io/library/alpine:latest
-										RUN --mount=type=bind,from=localhost/mount-ext-final-source:latest,target=/mnt mkdir -p /opt/app2 && cp /mnt/go.mod /opt/app2/go.mod
-										COPY --from=builder /opt /opt`,
-				ContextDirectory: "../testdata/image_content",
-			},
-			BuilderImages: []BuildDefinition{
-				{
-					Tag: "localhost/mount-ext-final-base:latest",
-					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/app1/go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-				{
-					Tag: "localhost/mount-ext-final-source:latest",
-					ContainerfileContent: `FROM scratch
-											COPY go_uuid.mod /go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-			},
-			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/mount-ext-final-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/mount-ext-final-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "external",
-						Pullspec:   "localhost/mount-ext-final-source@sha256:dummy",
-					},
-				},
-			},
-		},
-		"[RUN --mount] --mount from builder stage in final stage": {
-			SkipTestReason: "[Priority: high] capo does not trace content through RUN --mount",
-			TestImage: BuildDefinition{
-				Tag: "test-mount-builder-final",
-				ContainerfileContent: `FROM localhost/mount-builder-final-base:latest AS builder
-										COPY go_exp.mod /opt/app2/go.mod
-
-										FROM docker.io/library/alpine:latest
-										RUN --mount=type=bind,from=builder,target=/mnt mkdir -p /opt/app1 && cp /mnt/opt/app1/go.mod /opt/app1/go.mod
-										RUN --mount=type=bind,from=builder,target=/mnt mkdir -p /opt/app2 && cp /mnt/opt/app2/go.mod /opt/app2/go.mod`,
-				ContextDirectory: "../testdata/image_content",
-			},
-			BuilderImages: []BuildDefinition{
-				{
-					Tag: "localhost/mount-builder-final-base:latest",
-					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/app1/go.mod`,
-					ContextDirectory: "../testdata/image_content",
-				},
-			},
-			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/mount-builder-final-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/mount-builder-final-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
-			},
-		},
 		"[WORKDIR] WORKDIR set in intermediate image": {
 			TestImage: BuildDefinition{
 				Tag: "test-workdir-relative-dest",
@@ -2161,6 +1975,15 @@ func TestIntegrationScanErrors(t *testing.T) {
 								   FROM scratch
 								   COPY --from=builder /file /file`,
 			ExpectedError: ErrPullspecResolve,
+		},
+		"[RUN --mount] --mount from external image in builder stage": {
+			ContainerfileContent: `FROM localhost/mount-ext-base:latest AS builder
+									COPY go_exp.mod /opt/app3/go.mod
+									RUN --mount=type=bind,from=localhost/mount-ext-source:latest,target=/mnt mkdir -p /opt/app2 && cp /mnt/go.mod /opt/app2/go.mod
+
+									FROM scratch
+									COPY --from=builder /opt /opt`,
+			ExpectedError: ErrUnsupportedFeature,
 		},
 	}
 
