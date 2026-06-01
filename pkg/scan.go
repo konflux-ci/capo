@@ -3,7 +3,7 @@ package capo
 import (
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -67,7 +67,54 @@ var ErrPullspecResolve = errors.New("failed to resolve pullspec")
 var ErrOCIConfig = errors.New("failed to get OCIImageConfig")
 var ErrReferenceParse = errors.New("failed to parse image reference")
 
-func SetupStore() (storage.Store, error) {
+// Scanner exposes methods used for scanning of buildah image builds, assigning
+// image origins to SBOM packages present in a built image.
+type Scanner struct {
+	logger *slog.Logger
+	sclient storageclient.Client
+	store storage.Store
+}
+
+// Enable Scanner to use the functional options pattern for configuration
+type Option func(*Scanner)
+
+// Configure the Scanner to use the passed *slog.Logger for its logging.
+func WithLogger(l *slog.Logger) Option {
+	return func (s *Scanner) {
+		s.logger = l
+	}
+}
+
+// Create a new Scanner with the specified options or fail if an error occurred
+// while trying to set up the containers/storage store.
+func NewScanner(opts ...Option) (*Scanner, error) {
+	// Tech debt: Scanner uses both the storageclient (for
+	// resolving pullspecs and fetching OCIImageConfigs) that uses
+	// storage.Store internally and the raw storage.Store struct. This was
+	// done for ease of testing some features via a mock client. Ideally we
+	// would only have the storageclient implementation, so we had full control
+	// over unit testing.
+	store, err := setupStore()
+	if err != nil {
+		return nil, err
+	}
+
+	sclient := storageclient.NewBuildahClient(store)
+
+	s := &Scanner{
+		logger:  slog.Default(),
+		sclient: sclient,
+		store:   store,
+	}
+
+	for _, o := range opts {
+		o(s)
+	}
+
+	return s, nil
+}
+
+func setupStore() (storage.Store, error) {
 	// The containers/storage library requires this to run for some operations
 	if reexec.Init() {
 		return nil, fmt.Errorf("%w: failed to init reexec", ErrStorageSetup)
@@ -90,38 +137,25 @@ func SetupStore() (storage.Store, error) {
 // extracts relevant content from buildah storage and scans it using syft.
 // Returns a PackageMetadata struct containing packages and their origin information
 // for resolution by Mobster.
-func Scan(
+func (s *Scanner) Scan(
 	stages []containerfile.Stage,
 ) (PackageMetadata, error) {
 	res := PackageMetadata{
 		Packages: make([]PackageMetadataItem, 0),
 	}
-	log.Printf("[STAGES] %+v", stages)
+	s.logger.Debug("parsed containerfile stages", "stages", stages)
 
-	store, err := SetupStore()
+	digests, err := getImageDigests(s.sclient, stages)
 	if err != nil {
 		return PackageMetadata{}, err
 	}
 
-	// Tech debt: in this function, we use both the storageclient (for
-	// resolving pullspecs and fetching OCIImageConfigs) that uses
-	// storage.Store internally and the raw storage.Store struct. This was
-	// done for ease of testing some features via a mock client. Ideally we
-	// would only have the storageclient implementation, so we had full control
-	// over unit testing.
-	storageClient := storageclient.NewBuildahClient(store)
-
-	digests, err := getImageDigests(storageClient, stages)
-	if err != nil {
-		return PackageMetadata{}, err
-	}
-
-	pkgSources, err := getPackageSources(storageClient, stages, digests)
+	pkgSources, err := getPackageSources(s.sclient, stages, digests)
 	if err != nil {
 		return PackageMetadata{}, err
 	}
 	for _, pkgSource := range pkgSources {
-		stagePkgItems, err := scanSource(store, storageClient, pkgSource)
+		stagePkgItems, err := s.scanSource(pkgSource)
 		if err != nil {
 			return PackageMetadata{}, fmt.Errorf("failed to scan source %+v with error: %w", pkgSource, err)
 		}
@@ -390,9 +424,7 @@ func resolveRelativeDestination(cp containerfile.Copy, baseWorkdir string) strin
 // scanSource uses the passed initialized storage.Store struct to syft scan content
 // from the passed packageSource. Returns a slice of PackageMetadataItem structs specifying
 // origins of packages.
-func scanSource(
-	store storage.Store,
-	client storageclient.Client,
+func (s *Scanner) scanSource(
 	pkgSource packageSource,
 ) (_ []PackageMetadataItem, err error) {
 	// builder content is content that is present in a builder stage base image
@@ -411,8 +443,8 @@ func scanSource(
 	// and don't remove the temporary directories
 	debugMode := os.Getenv("CAPO_DEBUG") != ""
 	if debugMode {
-		log.Printf("[DEBUG] Builder %s content path: %s", pkgSource.pullspec, builderContentPath)
-		log.Printf("[DEBUG] Intermediate %s content path: %s", pkgSource.pullspec, intermediateContentPath)
+		s.logger.Debug("builder content path", "pullspec", pkgSource.pullspec, "path", builderContentPath)
+		s.logger.Debug("intermediate content path", "pullspec", pkgSource.pullspec, "path", intermediateContentPath)
 	} else {
 		defer func() {
 			removeErr := errors.Join(
@@ -425,7 +457,7 @@ func scanSource(
 		}()
 	}
 
-	err = getContent(store, client, pkgSource, builderContentPath, intermediateContentPath)
+	err = s.getContent(pkgSource, builderContentPath, intermediateContentPath)
 	if err != nil {
 		return nil, err
 	}

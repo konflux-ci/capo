@@ -102,9 +102,9 @@ func (testCase *TestCase) build(store storage.Store, buildahBinary string) error
 	return nil
 }
 
-func (testCase *TestCase) run(t *testing.T, store storage.Store, buildahBinary string) error {
-	defer testCase.cleanUp(t, store)
-	if err := testCase.build(store, buildahBinary); err != nil {
+func (testCase *TestCase) run(t *testing.T, scanner *Scanner, buildahBinary string) error {
+	defer testCase.cleanUp(t, scanner.store)
+	if err := testCase.build(scanner.store, buildahBinary); err != nil {
 		return err
 	}
 
@@ -113,7 +113,7 @@ func (testCase *TestCase) run(t *testing.T, store storage.Store, buildahBinary s
 		return err
 	}
 
-	result, err := Scan(stages)
+	result, err := scanner.Scan(stages)
 	if err != nil {
 		return err
 	}
@@ -2129,9 +2129,9 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 	}
-	store, err := SetupStore()
+	scanner, err := NewScanner()
 	if err != nil {
-		t.Fatalf("Failed to setup store: %+v", err)
+		t.Fatalf("Failed to create scanner: %+v", err)
 	}
 
 	buildahBinary := getBuildahBinary(t)
@@ -2142,7 +2142,7 @@ func TestIntegration(t *testing.T) {
 				t.Skip(tc.SkipTestReason)
 			}
 			normalizeTestCaseTags(&tc)
-			if err := tc.run(t, store, buildahBinary); err != nil {
+			if err := tc.run(t, scanner, buildahBinary); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -2164,6 +2164,11 @@ func TestIntegrationScanErrors(t *testing.T) {
 		},
 	}
 
+	scanner, err := NewScanner()
+	if err != nil {
+		t.Fatalf("Failed to create scanner: %+v", err)
+	}
+
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 			stages, err := containerfile.Parse(strings.NewReader(tc.ContainerfileContent), containerfile.BuildOptions{})
@@ -2171,7 +2176,7 @@ func TestIntegrationScanErrors(t *testing.T) {
 				t.Fatalf("Failed to parse containerfile: %v", err)
 			}
 
-			_, err = Scan(stages)
+			_, err = scanner.Scan(stages)
 			if !errors.Is(err, tc.ExpectedError) {
 				t.Fatalf("expected %v, got: %v", tc.ExpectedError, err)
 			}

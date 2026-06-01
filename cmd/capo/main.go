@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"runtime/debug"
 
@@ -132,7 +133,16 @@ func main() {
 	}
 	log.Printf("Parsed stages: %+v", stages)
 
-	pkgMetadata, err := capo.Scan(stages)
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	scanner, err := capo.NewScanner(capo.WithLogger(logger))
+	if err != nil {
+		log.Fatalf("Failed to create scanner: %+v", err)
+	}
+
+	pkgMetadata, err := scanner.Scan(stages)
 	if err != nil {
 		log.Fatalf("Failed to scan stages: %+v", err)
 	}
