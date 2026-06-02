@@ -62,10 +62,10 @@ type PackageMetadataItem struct {
 	StageAlias string `json:"stage_alias,omitempty"`
 }
 
-var ErrStorageSetup = errors.New("error while setting up buildah storage")
-var ErrPullspecResolve = errors.New("failed to resolve pullspec")
-var ErrOCIConfig = errors.New("failed to get OCIImageConfig")
-var ErrReferenceParse = errors.New("failed to parse image reference")
+var ErrStorageSetup = errors.New("ERR_STORAGE_SETUP")
+var ErrPullspecResolve = errors.New("ERR_PULLSPEC_RESOLVE")
+var ErrOCIConfig = errors.New("ERR_OCI_CONFIG")
+var ErrSBOMScan = errors.New("ERR_SBOM_SCAN")
 
 // Scanner exposes methods used for scanning of buildah image builds, assigning
 // image origins to SBOM packages present in a built image.
@@ -117,17 +117,17 @@ func NewScanner(opts ...Option) (*Scanner, error) {
 func setupStore() (storage.Store, error) {
 	// The containers/storage library requires this to run for some operations
 	if reexec.Init() {
-		return nil, fmt.Errorf("%w: failed to init reexec", ErrStorageSetup)
+		return nil, errorf(ErrStorageSetup, "failed to init reexec")
 	}
 
 	opts, err := storage.DefaultStoreOptions()
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to create default storage options: %w", ErrStorageSetup, err)
+		return nil, errorf(ErrStorageSetup, "failed to create default storage options: %w", err)
 	}
 
 	store, err := storage.GetStore(opts)
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to create storage: %w", ErrStorageSetup, err)
+		return nil, errorf(ErrStorageSetup, "failed to create storage: %w", err)
 	}
 
 	return store, nil
@@ -137,7 +137,18 @@ func setupStore() (storage.Store, error) {
 // extracts relevant content from buildah storage and scans it using syft.
 // Returns a PackageMetadata struct containing packages and their origin information
 // for resolution by Mobster.
+// Errors are returned as *ScanError with format "[CODE] message".
 func (s *Scanner) Scan(
+	stages []containerfile.Stage,
+) (PackageMetadata, error) {
+	res, err := s.scan(stages)
+	if err != nil {
+		return res, formatScanError(err)
+	}
+	return res, nil
+}
+
+func (s *Scanner) scan(
 	stages []containerfile.Stage,
 ) (PackageMetadata, error) {
 	res := PackageMetadata{
@@ -157,7 +168,9 @@ func (s *Scanner) Scan(
 	for _, pkgSource := range pkgSources {
 		stagePkgItems, err := s.scanSource(pkgSource)
 		if err != nil {
-			return PackageMetadata{}, fmt.Errorf("failed to scan source %+v with error: %w", pkgSource, err)
+			return PackageMetadata{}, fmt.Errorf(
+				"failed to scan source %+v with error: %w", pkgSource, err,
+			)
 		}
 
 		res.Packages = append(res.Packages, stagePkgItems...)
@@ -181,7 +194,7 @@ func getImageDigests(
 
 			dig, err := storageClient.ResolveDigest(stage.Base)
 			if err != nil {
-				return res, fmt.Errorf("%w %q: %w", ErrPullspecResolve, stage.Base, err)
+				return res, errorf(ErrPullspecResolve, "failed to resolve pullspec %q: %w", stage.Base, err)
 			}
 
 			res[stage.Base] = dig
@@ -197,7 +210,7 @@ func getImageDigests(
 			if _, ok := res[cp.From]; !ok {
 				dig, err := storageClient.ResolveDigest(cp.From)
 				if err != nil {
-					return res, fmt.Errorf("%w %q: %w", ErrPullspecResolve, cp.From, err)
+					return res, errorf(ErrPullspecResolve, "failed to resolve pullspec %q: %w", cp.From, err)
 				}
 
 				res[cp.From] = dig
@@ -213,13 +226,13 @@ func getImageDigests(
 func attachDigest(pullspec string, dig digest.Digest) (string, error) {
 	ref, err := reference.ParseNamed(pullspec)
 	if err != nil {
-		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
+		return "", errorf(ErrPullspecResolve, "failed to parse image reference %q: %w", pullspec, err)
 	}
 
 	// remove tags if present and add the digest
 	final, err := reference.WithDigest(reference.TrimNamed(ref), dig)
 	if err != nil {
-		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, pullspec, err)
+		return "", errorf(ErrPullspecResolve, "failed to attach digest to %q: %w", pullspec, err)
 	}
 
 	return final.String(), nil
@@ -258,7 +271,7 @@ func getPackageSources(
 
 		cfg, err := storageClient.GetImageConfig(s.Base)
 		if err != nil {
-			return []packageSource{}, fmt.Errorf("%w for %q", ErrOCIConfig, s.Base)
+			return []packageSource{}, errorf(ErrOCIConfig, "failed to get OCI image config for %q", s.Base)
 		}
 
 		baseToWorkdir[s.Base] = cfg.Config.Workdir
@@ -430,13 +443,13 @@ func (s *Scanner) scanSource(
 	// builder content is content that is present in a builder stage base image
 	builderContentPath, err := os.MkdirTemp("", "")
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to create temp directory: %w", ErrIO, err)
+		return nil, errorf(ErrIO, "failed to create temp directory: %w", err)
 	}
 
 	// intermediate content is content that created in a builder stage base during the build
 	intermediateContentPath, err := os.MkdirTemp("", "")
 	if err != nil {
-		return nil, fmt.Errorf("%w: failed to create temp directory: %w", ErrIO, err)
+		return nil, errorf(ErrIO, "failed to create temp directory: %w", err)
 	}
 
 	// if in debug mode, print the paths to saved content
@@ -464,12 +477,12 @@ func (s *Scanner) scanSource(
 
 	intermediatePkgs, err := sbom.SyftScan(intermediateContentPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan intermediate content: %w", err)
+		return nil, errorf(ErrSBOMScan, "failed to scan intermediate content: %w", err)
 	}
 
 	builderPkgs, err := sbom.SyftScan(builderContentPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan builder content: %w", err)
+		return nil, errorf(ErrSBOMScan, "failed to scan builder content: %w", err)
 	}
 
 	return getPackageMetadata(
