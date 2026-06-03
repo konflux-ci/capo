@@ -17,6 +17,7 @@ images (their labels or content) participated in given build in buildah storage.
 - Capo returns unexpected packages
 - Any capo error (see error reference below)
 - Need to verify what content capo extracted before Syft scanning
+- Fixing a bug — start by reproducing with a failing test (see [testing skill](../testing/SKILL.md#bug-fix-workflow))
 
 ## Error Reference
 

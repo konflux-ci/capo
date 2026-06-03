@@ -86,6 +86,19 @@ integration. Everything else is unit.
 | Build arg handling | `pkg/buildargs/buildargs_test.go` |
 | Bug fix | Test that reproduces the bug before the fix |
 
+## Bug Fix Workflow
+
+Always use test-driven approach for bug fixes:
+
+1. **Write a failing test first** — reproduce the bug with a test case that fails on the current code
+2. **Verify the test fails** — run `mage test` and confirm the failure matches the reported bug
+(redirect test logs to file for better readability and audit purposes)
+3. **Fix the bug** — make the minimal change to fix the issue
+4. **Verify the test passes** — run `mage test` again, the previously failing test should now pass
+5. **Check for regressions** — run `mage lint` and `mage integrationTest` if applicable
+
+Never fix first and test later — writing the test first ensures you understand the bug and that the fix actually addresses it.
+
 ## Common Mistakes
 
 - Missing `//go:build unit` or `//go:build integration` tag — tests won't run
