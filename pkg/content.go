@@ -22,12 +22,12 @@ import (
 
 const MinBuildahVersion = "1.44.0"
 
-var ErrImageNotFound = errors.New("ERR_IMAGE_NOT_FOUND")
-var ErrImageMount = errors.New("ERR_IMAGE_MOUNT")
-var ErrIO = errors.New("ERR_IO")
-var ErrStorage = errors.New("ERR_STORAGE")
-var ErrUnsupportedBuildahVersion = errors.New("ERR_UNSUPPORTED_BUILDAH_VERSION")
-var ErrMissingStageLabel = errors.New("ERR_MISSING_STAGE_LABEL")
+var ErrImageNotFound = errors.New("[ERR_IMAGE_NOT_FOUND] image not found in buildah storage")
+var ErrImageMount = errors.New("[ERR_IMAGE_MOUNT] failed to mount image")
+var ErrIO = errors.New("[ERR_IO] I/O operation failed")
+var ErrStorage = errors.New("[ERR_STORAGE] container storage error")
+var ErrUnsupportedBuildahVersion = errors.New("[ERR_UNSUPPORTED_BUILDAH_VERSION] unsupported buildah version")
+var ErrMissingStageLabel = errors.New("[ERR_MISSING_STAGE_LABEL] intermediate image is missing stage label")
 
 // getContent uses the container store to extract partial content from the build
 // for the specified package source. Extracts both builder base content and
@@ -47,11 +47,11 @@ func (s *Scanner) getContent(
 		// Special bases are not pullable or resolvable with Lookup
 		imgId, err := s.store.Lookup(storageclient.StripTransport(pkgSource.pullspec))
 		if err != nil {
-			return errorf(ErrImageNotFound, "could not find image %q in buildah storage", pkgSource.pullspec)
+			return fmt.Errorf("could not find image %q in buildah storage: %w", pkgSource.pullspec, ErrImageNotFound)
 		}
 		builderImage, err = s.store.Image(imgId)
 		if err != nil {
-			return errorf(ErrImageNotFound, "could not find image %q in buildah storage", pkgSource.pullspec)
+			return fmt.Errorf("could not find image %q in buildah storage: %w", pkgSource.pullspec, ErrImageNotFound)
 		}
 	}
 
@@ -135,12 +135,12 @@ func (s *Scanner) getImageContent(
 ) (included []string, err error) {
 	mountPath, err := s.store.MountImage(image.ID, []string{}, "")
 	if err != nil {
-		return included, errorf(ErrImageMount, "could not mount image: %w", err)
+		return included, fmt.Errorf("could not mount image: %w: %w", err, ErrImageMount)
 	}
 
 	defer func() {
 		if _, unmountErr := s.store.UnmountImage(image.ID, false); unmountErr != nil {
-			err = errorf(ErrStorage, "failed to unmount image: %w", unmountErr)
+			err = fmt.Errorf("failed to unmount image: %w: %w", unmountErr, ErrStorage)
 		}
 	}()
 
@@ -148,7 +148,7 @@ func (s *Scanner) getImageContent(
 		full := path.Join(mountPath, src)
 		matches, err := filepath.Glob(full)
 		if err != nil {
-			return included, errorf(ErrIO, "failed to glob pattern %q: %w", src, err)
+			return included, fmt.Errorf("failed to glob pattern %q: %w: %w", src, err, ErrIO)
 		}
 
 		if len(matches) == 0 {
@@ -158,12 +158,12 @@ func (s *Scanner) getImageContent(
 		for _, match := range matches {
 			fInfo, err := os.Stat(match)
 			if err != nil {
-				return included, errorf(ErrIO, "failed to stat %q: %w", match, err)
+				return included, fmt.Errorf("failed to stat %q: %w: %w", match, err, ErrIO)
 			}
 
 			relPath, err := filepath.Rel(mountPath, match)
 			if err != nil {
-				return included, errorf(ErrIO, "failed to get relative path for %q: %w", match, err)
+				return included, fmt.Errorf("failed to get relative path for %q: %w: %w", match, err, ErrIO)
 			}
 			dest := path.Join(contentPath, relPath)
 
@@ -171,7 +171,7 @@ func (s *Scanner) getImageContent(
 				// CopyFS also copies and follows symlinks even if they're outside the specified source,
 				// This is not a problem for us because Syft ignores symbolic links.
 				if err := os.CopyFS(dest, os.DirFS(match)); err != nil {
-					return included, errorf(ErrIO, "failed to copy directory %q to %q: %w", match, dest, err)
+					return included, fmt.Errorf("failed to copy directory %q to %q: %w: %w", match, dest, err, ErrIO)
 				}
 			} else if fInfo.Mode().IsRegular() {
 				if err := copyFile(match, dest); err != nil {
@@ -189,25 +189,25 @@ func (s *Scanner) getImageContent(
 func copyFile(src string, dest string) (err error) {
 	reader, err := os.Open(src)
 	if err != nil {
-		return errorf(ErrIO, "failed to open file %q: %w", src, err)
+		return fmt.Errorf("failed to open file %q: %w: %w", src, err, ErrIO)
 	}
 	defer func() {
 		err = reader.Close()
 	}()
 
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-		return errorf(ErrIO, "failed to create directory %q: %w", filepath.Dir(dest), err)
+		return fmt.Errorf("failed to create directory %q: %w: %w", filepath.Dir(dest), err, ErrIO)
 	}
 	writer, err := os.Create(dest)
 	if err != nil {
-		return errorf(ErrIO, "failed to create file %q: %w", dest, err)
+		return fmt.Errorf("failed to create file %q: %w: %w", dest, err, ErrIO)
 	}
 	defer func() {
 		err = writer.Close()
 	}()
 
 	if _, err = io.Copy(writer, reader); err != nil {
-		return errorf(ErrIO, "failed to copy file content: %w", err)
+		return fmt.Errorf("failed to copy file content: %w: %w", err, ErrIO)
 	}
 	return nil
 }
@@ -230,7 +230,7 @@ func (s *Scanner) getIntermediateContent(
 	// Find intermediate image using buildah stage labels
 	intermediateImage, found, err := s.findIntermediateImage(stageAlias)
 	if err != nil {
-		return []string{}, errorf(ErrStorage, "failed to find intermediate image: %w", err)
+		return []string{}, fmt.Errorf("failed to find intermediate image: %w: %w", err, ErrStorage)
 	}
 	if !found {
 		// No intermediate image for this stage
@@ -244,12 +244,12 @@ func (s *Scanner) getIntermediateContent(
 
 	builderLayer, err := s.store.Layer(builderImage.TopLayer)
 	if err != nil {
-		return []string{}, errorf(ErrStorage, "failed to get builder layer: %w", err)
+		return []string{}, fmt.Errorf("failed to get builder layer: %w: %w", err, ErrStorage)
 	}
 
 	interLayer, err := s.store.Layer(intermediateImage.TopLayer)
 	if err != nil {
-		return []string{}, errorf(ErrStorage, "failed to get intermediate layer: %w", err)
+		return []string{}, fmt.Errorf("failed to get intermediate layer: %w: %w", err, ErrStorage)
 	}
 
 	included, err := s.saveDiff(path, interLayer.ID, builderLayer.ID, sources)
@@ -273,7 +273,7 @@ func (s *Scanner) saveDiff(
 
 	diff, err := s.store.Diff(parentId, layerId, &opts)
 	if err != nil {
-		return []string{}, errorf(ErrStorage, "failed to compute layer diff: %w", err)
+		return []string{}, fmt.Errorf("failed to compute layer diff: %w: %w", err, ErrStorage)
 	}
 	defer func() {
 		err = diff.Close()
@@ -287,7 +287,7 @@ func (s *Scanner) saveDiff(
 			break
 		}
 		if err != nil {
-			return []string{}, errorf(ErrIO, "failed to read tar header: %w", err)
+			return []string{}, fmt.Errorf("failed to read tar header: %w: %w", err, ErrIO)
 		}
 
 		if !includes(sources, header.Name) {
@@ -301,21 +301,21 @@ func (s *Scanner) saveDiff(
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0755); err != nil {
-				return []string{}, errorf(ErrIO, "failed to create directory %q: %w", target, err)
+				return []string{}, fmt.Errorf("failed to create directory %q: %w: %w", target, err, ErrIO)
 			}
 		case tar.TypeReg:
 			// sometimes the archive does not have headers for directories
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				return []string{}, errorf(ErrIO, "failed to create directory %q: %w", filepath.Dir(target), err)
+				return []string{}, fmt.Errorf("failed to create directory %q: %w: %w", filepath.Dir(target), err, ErrIO)
 			}
 			f, err := os.Create(target)
 			if err != nil {
-				return []string{}, errorf(ErrIO, "failed to create file %q: %w", target, err)
+				return []string{}, fmt.Errorf("failed to create file %q: %w: %w", target, err, ErrIO)
 			}
 
 			if _, err := io.Copy(f, reader); err != nil {
 				_ = f.Close()
-				return []string{}, errorf(ErrIO, "failed to copy file content: %w", err)
+				return []string{}, fmt.Errorf("failed to copy file content: %w: %w", err, ErrIO)
 			}
 			_ = f.Close()
 		}
@@ -336,7 +336,7 @@ func (s *Scanner) findIntermediateImage(
 
 	images, err := s.store.Images()
 	if err != nil {
-		return nil, false, errorf(ErrStorage, "failed to list images: %w", err)
+		return nil, false, fmt.Errorf("failed to list images: %w: %w", err, ErrStorage)
 	}
 
 	var errs []error
@@ -347,9 +347,9 @@ func (s *Scanner) findIntermediateImage(
 
 		cfg, err := s.sclient.GetImageConfig(images[i].ID)
 		if err != nil {
-			errs = append(errs, errorf(
-				ErrStorage, "getting image config for intermediate image %s: %w",
-				images[i].ID, err,
+			errs = append(errs, fmt.Errorf(
+				"getting image config for intermediate image %s: %w: %w",
+				images[i].ID, err, ErrStorage,
 			))
 			continue
 		}
@@ -366,11 +366,10 @@ func (s *Scanner) findIntermediateImage(
 
 		stageName, hasStageLabel := cfg.Config.Labels["io.buildah.stage.name"]
 		if !hasStageLabel {
-			errs = append(errs, errorf(
-				ErrMissingStageLabel,
+			errs = append(errs, fmt.Errorf(
 				"intermediate image %s (buildah %s) is missing io.buildah.stage.name label, "+
-					"make sure to pass --save-stages --stage-labels to the buildah build command",
-				images[i].ID, cfg.Config.Labels["io.buildah.version"],
+					"make sure to pass --save-stages --stage-labels to the buildah build command: %w",
+				images[i].ID, cfg.Config.Labels["io.buildah.version"], ErrMissingStageLabel,
 			))
 			continue
 		}
@@ -382,10 +381,9 @@ func (s *Scanner) findIntermediateImage(
 	}
 
 	if len(errs) > 0 {
-		return nil, false, errorf(
-			ErrStorage,
-			"no intermediate image found for stage %q; encountered %d problematic image(s) in storage:\n%w",
-			stageAlias, len(errs), errors.Join(errs...),
+		return nil, false, fmt.Errorf(
+			"no intermediate image found for stage %q; encountered %d problematic image(s) in storage:\n%w: %w",
+			stageAlias, len(errs), errors.Join(errs...), ErrStorage,
 		)
 	}
 	s.logger.Debug("no intermediate image found for stage",
@@ -399,12 +397,12 @@ func (s *Scanner) findIntermediateImage(
 func checkBuildahVersionFromImage(labels map[string]string) error {
 	buildahVersionStr, ok := labels["io.buildah.version"]
 	if !ok {
-		return errorf(ErrUnsupportedBuildahVersion, "io.buildah.version label not found in image config")
+		return fmt.Errorf("io.buildah.version label not found in image config: %w", ErrUnsupportedBuildahVersion)
 	}
 
 	buildahVersion, err := semver.NewVersion(buildahVersionStr)
 	if err != nil {
-		return errorf(ErrUnsupportedBuildahVersion, "could not parse buildah version %q: %w", buildahVersionStr, err)
+		return fmt.Errorf("could not parse buildah version %q: %w: %w", buildahVersionStr, err, ErrUnsupportedBuildahVersion)
 	}
 
 	// Accept prerelease versions (e.g. 1.43.0-dev) for integration tests build
@@ -416,10 +414,9 @@ func checkBuildahVersionFromImage(labels map[string]string) error {
 
 	minVersion, _ := semver.NewVersion(MinBuildahVersion)
 	if buildahVersion.LessThan(minVersion) {
-		return errorf(
-			ErrUnsupportedBuildahVersion,
-			"image was built with buildah %s, requires >= %s",
-			buildahVersionStr, MinBuildahVersion,
+		return fmt.Errorf(
+			"image was built with buildah %s, requires >= %s: %w",
+			buildahVersionStr, MinBuildahVersion, ErrUnsupportedBuildahVersion,
 		)
 	}
 
