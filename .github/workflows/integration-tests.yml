@@ -45,7 +45,7 @@ jobs:
       run: mage IntegrationCoverage
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v7
       with:
         use_oidc: true
         flags: integration-tests
