@@ -16,6 +16,7 @@ Buildprobe (`cmd/buildprobe/`) is a separate CLI tool in this repo. It parses a 
 - **Build tags** - all builds require `exclude_graphdriver_btrfs`. Unit tests need `unit` tag, integration tests need `integration` tag. See `magefile.go` for exact flags.
 - **Buildah >= 1.44.0** - capo expects images built with `buildah build --save-stages --stage-labels` to find saved and labeled intermediate images and pair them with appropriate builder base image of given stage for proper content tracing.
 - **Merge-ready:** `mage lint`, `mage test` and `mage integrationTest` must pass before treating work as complete.
+- **Error conventions** - sentinel errors in `pkg/` must contain a machine-readable code in square brackets followed by a description, e.g. `errors.New("[ERR_STORAGE_SETUP] failed to set up container storage")`. Wrap sentinels with `fmt.Errorf("detail: %w", ErrSentinel)` — no custom error types needed.
 
 ## Toolchain
 
