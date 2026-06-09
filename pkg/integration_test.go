@@ -108,12 +108,12 @@ func (testCase *TestCase) run(t *testing.T, scanner *Scanner, buildahBinary stri
 		return err
 	}
 
-	stages, err := containerfile.Parse(strings.NewReader(testCase.TestImage.ContainerfileContent), containerfile.BuildOptions{})
+	cf, err := containerfile.Parse(strings.NewReader(testCase.TestImage.ContainerfileContent), containerfile.BuildOptions{})
 	if err != nil {
 		return err
 	}
 
-	result, err := scanner.Scan(stages)
+	result, err := scanner.Scan(cf)
 	if err != nil {
 		return err
 	}
@@ -1990,12 +1990,12 @@ func TestIntegrationScanErrors(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			stages, err := containerfile.Parse(strings.NewReader(tc.ContainerfileContent), containerfile.BuildOptions{})
+			cf, err := containerfile.Parse(strings.NewReader(tc.ContainerfileContent), containerfile.BuildOptions{})
 			if err != nil {
 				t.Fatalf("Failed to parse containerfile: %v", err)
 			}
 
-			_, err = scanner.Scan(stages)
+			_, err = scanner.Scan(cf)
 			if !errors.Is(err, tc.ExpectedError) {
 				t.Fatalf("expected %v, got: %v", tc.ExpectedError, err)
 			}
