@@ -127,11 +127,11 @@ func main() {
 		}
 	}()
 
-	stages, err := containerfile.Parse(r, buildOptsFromArgs(args))
+	cf, err := containerfile.Parse(r, buildOptsFromArgs(args))
 	if err != nil {
 		log.Fatalf("Failed to parse containerfile %+v", err)
 	}
-	log.Printf("Parsed stages: %+v", stages)
+	log.Printf("Parsed stages: %+v", cf.Stages)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
@@ -142,7 +142,7 @@ func main() {
 		log.Fatalf("Failed to create scanner: %+v", err)
 	}
 
-	pkgMetadata, err := scanner.Scan(stages)
+	pkgMetadata, err := scanner.Scan(cf)
 	if err != nil {
 		log.Fatalf("Failed to scan stages: %+v", err)
 	}

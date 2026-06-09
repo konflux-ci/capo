@@ -66,7 +66,7 @@ func Probe(opts ProbeOpts, client storageclient.Client) (BuildMetadata, error) {
 		meta.Image.Digest = digest.String()
 	}
 
-	stages, err := containerfile.Parse(
+	cf, err := containerfile.Parse(
 		opts.Containerfile,
 		containerfile.BuildOptions{
 			Args:   opts.Args,
@@ -77,7 +77,7 @@ func Probe(opts ProbeOpts, client storageclient.Client) (BuildMetadata, error) {
 		return meta, fmt.Errorf("%w: %w", ErrParseContainerfile, err)
 	}
 
-	reachable := reachableStages(stages)
+	reachable := reachableStages(cf.Stages)
 
 	baseImages, err := resolveBaseImages(client, reachable)
 	if err != nil {
