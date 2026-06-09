@@ -194,23 +194,23 @@ func checkUnsupportedFeatures(stages []containerfile.Stage) error {
 // Returns a PackageMetadata struct containing packages and their origin information
 // for resolution by Mobster.
 func (s *Scanner) Scan(
-	stages []containerfile.Stage,
+	cf containerfile.Containerfile,
 ) (PackageMetadata, error) {
-	if err := checkUnsupportedFeatures(stages); err != nil {
+	if err := checkUnsupportedFeatures(cf.Stages); err != nil {
 		return PackageMetadata{}, err
 	}
 
 	res := PackageMetadata{
 		Packages: make([]PackageMetadataItem, 0),
 	}
-	s.logger.Debug("parsed containerfile stages", "stages", stages)
+	s.logger.Debug("parsed containerfile stages", "stages", cf.Stages)
 
-	digests, err := getImageDigests(s.sclient, stages)
+	digests, err := getImageDigests(s.sclient, cf.Stages)
 	if err != nil {
 		return PackageMetadata{}, err
 	}
 
-	roots, externals, err := getPackageSources(s.sclient, stages, digests)
+	roots, externals, err := getPackageSources(s.sclient, cf.Stages, digests)
 	if err != nil {
 		return PackageMetadata{}, err
 	}

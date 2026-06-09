@@ -78,8 +78,15 @@ const (
 	MountTypeSSH
 )
 
-// A builder or final stage in a Containerfile
-// TODO: encase this in a containerfile struct?
+// Containerfile is a parsed representation of a Containerfile (Dockerfile),
+// containing all build stages in order.
+type Containerfile struct {
+	// Stages in the containerfile, in order. The last stage is the final
+	// (output) stage.
+	Stages []Stage
+}
+
+// A builder or final stage in a Containerfile.
 type Stage struct {
 	// Alias of the builder stage or equal to FinalStage if final.
 	Alias string
@@ -116,12 +123,12 @@ var ErrParse = errors.New("error while parsing containerfile")
 
 // Parse reads a Containerfile from the passed reader and uses the passed
 // BuildOptions to parse the Containerfile into stages.
-func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
+func Parse(reader io.Reader, opts BuildOptions) (Containerfile, error) {
 	res := make([]Stage, 0)
 
 	node, err := imagebuilder.ParseDockerfile(reader)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParse, err)
+		return Containerfile{}, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 
 	// TODO: At this stage, Buildah code takes into account OS and ARCH CLI args
@@ -134,20 +141,20 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 	builder := imagebuilder.NewBuilder(opts.Args)
 	rawStages, err := imagebuilder.NewStages(node, builder)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParse, err)
+		return Containerfile{}, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 
 	if opts.Target != "" {
 		stagesTargeted, ok := rawStages.ThroughTarget(opts.Target)
 		if !ok {
-			return nil, fmt.Errorf("%w: %s", ErrTargetNotFound, opts.Target)
+			return Containerfile{}, fmt.Errorf("%w: %s", ErrTargetNotFound, opts.Target)
 		}
 		rawStages = stagesTargeted
 	}
 
 	pullspecs, err := resolvePullspecs(rawStages)
 	if err != nil {
-		return nil, err
+		return Containerfile{}, err
 	}
 	stageNames := make([]string, 0)
 	// maps stage alias to root base pullspec (resolved through chain)
@@ -165,7 +172,7 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 
 		stage, err := parseStage(s, pullspecs[index], stageNames)
 		if err != nil {
-			return res, err
+			return Containerfile{Stages: res}, err
 		}
 
 		baseRef := pullspecs[index]
@@ -177,12 +184,13 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 		}
 		aliasToBase[s.Name] = base
 		stage.BaseRef = baseRef
+		stage.Base = base
 		stage.Index = stageIndex
 
 		res = append(res, stage)
 	}
 
-	return res, nil
+	return Containerfile{Stages: res}, nil
 }
 
 // argsMapToSlice returns the contents of a map[string]string as a slice of keys
