@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -74,6 +75,7 @@ const (
 )
 
 // A builder or final stage in a Containerfile
+// TODO: encase this in a containerfile struct?
 type Stage struct {
 	// Alias of the builder stage or equal to FinalStage if final.
 	Alias string
@@ -83,6 +85,8 @@ type Stage struct {
 	Copies []Copy
 	// Mount references in this stage.
 	Mounts []Mount
+	// Labels set via LABEL instructions in this stage.
+	Labels map[string]string
 }
 
 // BuildOptions controls how a Containerfile is parsed.
@@ -143,17 +147,12 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 			s.Name = FinalStage
 		}
 
-		copies, mounts, err := parseStageRefs(s, stageNames)
+		stage, err := parseStage(s, pullspecs[i], stageNames)
 		if err != nil {
 			return res, err
 		}
 
-		res = append(res, Stage{
-			Alias:  s.Name,
-			Base:   pullspecs[i],
-			Copies: copies,
-			Mounts: mounts,
-		})
+		res = append(res, stage)
 	}
 
 	return res, nil
@@ -189,8 +188,8 @@ func resolvePullspecs(stages []imagebuilder.Stage) ([]string, error) {
 	return res, nil
 }
 
-// parseStageRefs parses the AST for the passed imagebuilder.Stage and
-// returns slices of Copy and Mount structs found in the stage.
+// parseStage parses the AST for the passed imagebuilder.Stage and returns a
+// Stage struct with its copies, mounts, and labels populated.
 //
 // A COPY command is builder-type if the "--from" flag is specified and it copies from
 // a builder stage or directly from an image.
@@ -198,9 +197,10 @@ func resolvePullspecs(stages []imagebuilder.Stage) ([]string, error) {
 // Uses the passed previous stageNames to specify whether references are to a stage
 // or directly to an image.
 // WARNING: named contexts in the Containerfile are not supported
-func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount, error) {
+func parseStage(s imagebuilder.Stage, pullspec string, stageNames []string) (Stage, error) {
 	copies := make([]Copy, 0)
 	mounts := make([]Mount, 0)
+	labels := make(map[string]string)
 	workdir := ""
 	headingEnv := argsMapToSlice(s.Builder.HeadingArgs)
 	userEnv := argsMapToSlice(s.Builder.Args)
@@ -208,6 +208,11 @@ func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount,
 	// user provided args override the heading ARGs,
 	// so they're appended second to take priority
 	env := append(headingEnv, userEnv...)
+
+	stage := Stage{
+		Alias: s.Name,
+		Base:  pullspec,
+	}
 
 	for _, child := range s.Node.Children {
 		switch child.Value {
@@ -222,7 +227,7 @@ func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount,
 		case "copy":
 			cp, err := parseCopy(child, workdir, env, stageNames)
 			if err != nil {
-				return copies, mounts, err
+				return stage, err
 			}
 
 			if cp != nil {
@@ -232,13 +237,24 @@ func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount,
 		case "run":
 			runMounts, err := parseMounts(child, env, stageNames)
 			if err != nil {
-				return copies, mounts, err
+				return stage, err
 			}
 			mounts = append(mounts, runMounts...)
+
+		case "label":
+			parsed, err := parseLabels(child, env)
+			if err != nil {
+				return stage, err
+			}
+			maps.Copy(labels, parsed)
 		}
 	}
 
-	return copies, mounts, nil
+	stage.Copies = copies
+	stage.Mounts = mounts
+	stage.Labels = labels
+
+	return stage, nil
 }
 
 // isStageRef returns true if ref matches a known stage, either by name or by
@@ -361,4 +377,22 @@ func parseCopy(node *parser.Node, workdir string, env []string, stageNames []str
 	}
 
 	return nil, nil
+}
+
+func parseLabels(node *parser.Node, env []string) (map[string]string, error) {
+	labels := make(map[string]string)
+	curr := node.Next
+	for curr != nil && curr.Next != nil {
+		key, err := imagebuilder.ProcessWord(curr.Value, env)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrParse, err)
+		}
+		val, err := imagebuilder.ProcessWord(curr.Next.Value, env)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrParse, err)
+		}
+		labels[key] = val
+		curr = curr.Next.Next
+	}
+	return labels, nil
 }

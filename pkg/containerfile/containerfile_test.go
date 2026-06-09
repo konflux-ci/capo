@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestParseBuiltinArgs(t *testing.T) {
@@ -47,7 +48,7 @@ func TestParseBuiltinArgs(t *testing.T) {
 		t.Fatalf("Parsing failed: %v", err)
 	}
 
-	if diff := cmp.Diff(expected, actual); diff != "" {
+	if diff := cmp.Diff(expected, actual, cmpopts.EquateEmpty()); diff != "" {
 		t.Errorf("Parse() result mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -596,6 +597,97 @@ func TestParse(t *testing.T) {
 				},
 			},
 		},
+		"single label": {
+			containerfile: `FROM quay.io/rhel:9
+							LABEL version=1.0`,
+			expected: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"version": "1.0"},
+				},
+			},
+		},
+		"multiple labels on one line": {
+			containerfile: `FROM quay.io/rhel:9
+							LABEL version=1.0 vendor="Red Hat"`,
+			expected: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"version": "1.0", "vendor": "Red Hat"},
+				},
+			},
+		},
+		"multiple LABEL instructions merge": {
+			containerfile: `FROM quay.io/rhel:9
+							LABEL version=1.0
+							LABEL vendor="Red Hat"`,
+			expected: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"version": "1.0", "vendor": "Red Hat"},
+				},
+			},
+		},
+		"label with ARG substitution": {
+			containerfile: `ARG VER=2.0
+							FROM quay.io/rhel:9
+							LABEL version=$VER`,
+			buildOptions: BuildOptions{},
+			expected: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"version": "2.0"},
+				},
+			},
+		},
+		"later label overrides earlier": {
+			containerfile: `FROM quay.io/rhel:9
+							LABEL version=1.0
+							LABEL version=2.0`,
+			expected: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"version": "2.0"},
+				},
+			},
+		},
+		"labels are per-stage": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							LABEL stage=builder
+							FROM scratch
+							LABEL stage=final`,
+			expected: []Stage{
+				{
+					Alias:  "builder",
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"stage": "builder"},
+				},
+				{
+					Alias:  FinalStage,
+					Base:   "scratch",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"stage": "final"},
+				},
+			},
+		},
 		"complex multi-stage with multiple final copies": {
 			containerfile: `FROM docker.io/library/fedora:latest AS builder1
 							FROM docker.io/alpine/helm:latest AS builder2
@@ -662,7 +754,7 @@ func TestParse(t *testing.T) {
 				t.Fatalf("Parsing failed: %v", err)
 			}
 
-			if diff := cmp.Diff(test.expected, actual); diff != "" {
+			if diff := cmp.Diff(test.expected, actual, cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("Parse() result mismatch (-want +got):\n%s", diff)
 			}
 		})
