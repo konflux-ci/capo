@@ -90,6 +90,32 @@ func (s *Scanner) logContent(kind string, content []string, pullspec string) {
 	}
 }
 
+// getExternalContent extracts content from an external image (COPY --from=image:tag).
+// External images have no intermediate layer — only the image content is extracted.
+func (s *Scanner) getExternalContent(
+	pullspec string,
+	sources []string,
+	contentPath string,
+) error {
+	imgID, err := s.store.Lookup(storageclient.StripTransport(pullspec))
+	if err != nil {
+		return fmt.Errorf("could not find external image %q in buildah storage: %w", pullspec, ErrImageNotFound)
+	}
+
+	img, err := s.store.Image(imgID)
+	if err != nil {
+		return fmt.Errorf("could not find external image %q in buildah storage: %w", pullspec, ErrImageNotFound)
+	}
+
+	content, err := s.getImageContent(img, sources, contentPath)
+	if err != nil {
+		return err
+	}
+
+	s.logContent("external", content, pullspec)
+	return nil
+}
+
 // getDescendantContent extracts intermediate content for a chained stage (node)
 // by diffing its intermediate image against the provided diff base image.
 // Returns the node's intermediate image and the list of extracted paths.
