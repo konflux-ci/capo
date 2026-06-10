@@ -8,42 +8,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-func TestParseBuildArgLine(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		input   string
-		wantKey string
-		wantVal string
-		wantErr bool
-	}{
-		{name: "simple", input: "FOO=bar", wantKey: "FOO", wantVal: "bar"},
-		{name: "value with equals", input: "FOO=bar=baz", wantKey: "FOO", wantVal: "bar=baz"},
-		{name: "empty value", input: "FOO=", wantKey: "FOO", wantVal: ""},
-		{name: "no equals", input: "FOOBAR", wantErr: true},
-		{name: "empty key", input: "=value", wantErr: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			key, val, err := ParseBuildArgLine(tt.input)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatalf("expected error, got key=%q val=%q", key, val)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if key != tt.wantKey || val != tt.wantVal {
-				t.Errorf("got key=%q val=%q, want key=%q val=%q", key, val, tt.wantKey, tt.wantVal)
-			}
-		})
-	}
-}
-
 func TestParseBuildArgFile(t *testing.T) {
 	t.Parallel()
 	content := `# This is a comment
@@ -90,13 +54,83 @@ func TestParseBuildArgFileInvalidLine(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bad.conf")
-	if err := os.WriteFile(path, []byte("NOEQUALS\n"), 0644); err != nil {
+	if err := os.WriteFile(path, []byte("=value\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	_, err := ParseBuildArgFile(path)
 	if err == nil {
-		t.Fatal("expected error for invalid line")
+		t.Fatal("expected error for empty key")
+	}
+}
+
+func TestParseBuildArgFileBareKeyInheritsFromEnv(t *testing.T) {
+	t.Setenv("INHERIT_ME", "from-env")
+
+	content := "EXPLICIT=value\nINHERIT_ME\n"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "args.conf")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	args, err := ParseBuildArgFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := map[string]string{
+		"EXPLICIT":   "value",
+		"INHERIT_ME": "from-env",
+	}
+	if diff := cmp.Diff(expected, args); diff != "" {
+		t.Errorf("ParseBuildArgFile() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseBuildArgFileBareKeyDeletedWhenNotInEnv(t *testing.T) {
+	t.Parallel()
+
+	content := "KEEP=value\nNOT_IN_ENV\n"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "args.conf")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	args, err := ParseBuildArgFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := map[string]string{
+		"KEEP": "value",
+	}
+	if diff := cmp.Diff(expected, args); diff != "" {
+		t.Errorf("ParseBuildArgFile() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseBuildArgFileExplicitEmptyStaysEmpty(t *testing.T) {
+	t.Setenv("EMPTY_KEY", "should-not-be-used")
+
+	content := "EMPTY_KEY=\n"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "args.conf")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	args, err := ParseBuildArgFile(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	expected := map[string]string{
+		"EMPTY_KEY": "",
+	}
+	if diff := cmp.Diff(expected, args); diff != "" {
+		t.Errorf("ParseBuildArgFile() mismatch (-want +got):\n%s", diff)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/konflux-ci/capo/pkg/buildargs"
 	"github.com/openshift/imagebuilder"
 	"github.com/openshift/imagebuilder/dockerfile/parser"
 )
@@ -98,8 +99,16 @@ type Stage struct {
 
 // BuildOptions controls how a Containerfile is parsed.
 type BuildOptions struct {
-	// Build arguments passed to buildah for the build
+	// Build arguments passed to buildah for the build.
+	// Environment variable resolution for bare KEY args (without =) must be
+	// done before passing args here (see buildargs.ReadBuildArg).
 	Args map[string]string
+
+	// Path to the build arg file to parse for args.
+	// Bare KEY lines (without =) in the file inherit from the host
+	// environment, matching buildah semantics.
+	BuildArgFilePath string
+
 	// Target stage of the buildah build
 	Target string
 }
@@ -116,6 +125,15 @@ var ErrParse = errors.New("error while parsing containerfile")
 func Parse(reader io.Reader, opts BuildOptions) (Containerfile, error) {
 	res := make([]Stage, 0)
 
+	args := opts.Args
+	if opts.BuildArgFilePath != "" {
+		fileArgs, err := buildargs.ParseBuildArgFile(opts.BuildArgFilePath)
+		if err != nil {
+			return Containerfile{}, fmt.Errorf("parsing build-arg-file: %w", err)
+		}
+		args = buildargs.MergeBuildArgs(fileArgs, opts.Args)
+	}
+
 	node, err := imagebuilder.ParseDockerfile(reader)
 	if err != nil {
 		return Containerfile{}, fmt.Errorf("%w: %w", ErrParse, err)
@@ -128,7 +146,7 @@ func Parse(reader io.Reader, opts BuildOptions) (Containerfile, error) {
 	// but I'm keeping this here as a guideline.
 	// https://github.com/containers/buildah/blob/main/imagebuildah/build.go#L431
 
-	builder := imagebuilder.NewBuilder(opts.Args)
+	builder := imagebuilder.NewBuilder(args)
 	rawStages, err := imagebuilder.NewStages(node, builder)
 	if err != nil {
 		return Containerfile{}, fmt.Errorf("%w: %w", ErrParse, err)
