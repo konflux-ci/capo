@@ -1296,6 +1296,61 @@ func TestGetPackageSources(t *testing.T) {
 			},
 			expectedExternals: []ExternalPackageSource{},
 		},
+		"external COPY --from in builder stage": {
+			stages: []containerfile.Stage{
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/fedora:latest",
+					BaseRef: "docker.io/library/fedora:latest",
+					Index:   0,
+					Copies: []containerfile.Copy{
+						{
+							From:        "docker.io/library/external:latest",
+							Sources:     []string{"/ext/bin"},
+							Destination: "/ext/bin",
+							Type:        containerfile.CopyTypeExternal,
+						},
+					},
+				},
+				{
+					Alias:   containerfile.FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
+					Copies: []containerfile.Copy{
+						{
+							From:        "builder",
+							Sources:     []string{"/app/", "/ext/bin"},
+							Destination: "/",
+							Type:        containerfile.CopyTypeBuilder,
+						},
+					},
+				},
+			},
+			digests: map[string]digest.Digest{
+				"docker.io/library/fedora:latest": testDigest("eee111"),
+				"docker.io/library/external:latest":       testDigest("fff222"),
+			},
+			configs: map[string]storageclient.OCIImageConfig{
+				"docker.io/library/fedora:latest": configWithWorkdir("/"),
+			},
+			expectedRoots: []BuilderPackageSourceRoot{
+				{
+					index:      0,
+					alias:      "builder",
+					pullspec:   "docker.io/library/fedora:latest",
+					digestBase: "docker.io/library/fedora@" + string(testDigest("eee111")),
+					sources:    []string{"/app/"},
+				},
+			},
+			expectedExternals: []ExternalPackageSource{
+				{
+					pullspec:   "docker.io/library/external:latest",
+					digestBase: "docker.io/library/external@" + string(testDigest("fff222")),
+					sources:    []string{"/ext/bin"},
+				},
+			},
+		},
 	}
 
 	for name, test := range tests {
