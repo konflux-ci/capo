@@ -40,13 +40,11 @@ func parseArgs() (args, error) {
 	buildArgs := make(map[string]string)
 	flag.Func(
 		"build-arg",
-		"Build argument passed to buildah in the form KEY=VALUE. Can be used multiple times.",
+		"Build argument in the form KEY=VALUE or bare KEY (inherits from environment). Can be used multiple times.",
 		func(s string) error {
-			key, value, err := buildargs.ParseBuildArgLine(s)
-			if err != nil {
+			if err := buildargs.ReadBuildArg(s, buildArgs); err != nil {
 				return ErrBuildArg
 			}
-			buildArgs[key] = value
 			return nil
 		},
 	)
