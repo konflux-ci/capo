@@ -36,45 +36,47 @@ var ErrMissingStageLabel = errors.New("[ERR_MISSING_STAGE_LABEL] intermediate im
 // Uses buildah stage labels (io.buildah.stage.name) to identify intermediate
 // image for each stage.
 func (s *Scanner) getContent(
-	pkgSource packageSource,
+	pullspec string,
+	stageAlias string,
+	sources []string,
 	builderContentPath string,
 	intermediateContentPath string,
 ) error {
-	isSpecialBase := storageclient.IsSpecialBase(pkgSource.pullspec)
+	isSpecialBase := storageclient.IsSpecialBase(pullspec)
 	var builderImage *storage.Image
 
 	if !isSpecialBase {
 		// Special bases are not pullable or resolvable with Lookup
-		imgId, err := s.store.Lookup(storageclient.StripTransport(pkgSource.pullspec))
+		imgId, err := s.store.Lookup(storageclient.StripTransport(pullspec))
 		if err != nil {
-			return fmt.Errorf("could not find image %q in buildah storage: %w", pkgSource.pullspec, ErrImageNotFound)
+			return fmt.Errorf("could not find image %q in buildah storage: %w", pullspec, ErrImageNotFound)
 		}
 		builderImage, err = s.store.Image(imgId)
 		if err != nil {
-			return fmt.Errorf("could not find image %q in buildah storage: %w", pkgSource.pullspec, ErrImageNotFound)
+			return fmt.Errorf("could not find image %q in buildah storage: %w", pullspec, ErrImageNotFound)
 		}
 	}
 
 	// Special bases will have builderImage set as nil
 	intermediate, err := s.getIntermediateContent(
 		builderImage,
-		pkgSource.alias,
-		pkgSource.sources,
+		stageAlias,
+		sources,
 		intermediateContentPath,
 	)
 
 	if err != nil {
 		return err
 	}
-	s.logContent("intermediate", intermediate, pkgSource.pullspec)
+	s.logContent("intermediate", intermediate, pullspec)
 
 	if !isSpecialBase {
 		// Only standard bases have builder content. All content in special bases is treated as intermediate.
-		builderContent, err := s.getImageContent(builderImage, pkgSource.sources, builderContentPath)
+		builderContent, err := s.getImageContent(builderImage, sources, builderContentPath)
 		if err != nil {
 			return err
 		}
-		s.logContent("builder", builderContent, pkgSource.pullspec)
+		s.logContent("builder", builderContent, pullspec)
 	}
 
 	return nil
@@ -86,6 +88,45 @@ func (s *Scanner) logContent(kind string, content []string, pullspec string) {
 	} else {
 		s.logger.Debug("included content", "kind", kind, "content", content, "pullspec", pullspec)
 	}
+}
+
+// getDescendantContent extracts intermediate content for a chained stage (node)
+// by diffing its intermediate image against the provided diff base image.
+// Returns the node's intermediate image and the list of extracted paths.
+// The returned image is passed as diff base to further descendants in the chain.
+// If the node has no intermediate image (empty stage), returns diffBase unchanged
+// so it propagates through to the next descendant.
+func (s *Scanner) getDescendantContent(
+	stageAlias string,
+	diffBase *storage.Image,
+	sources []string,
+	contentPath string,
+) (*storage.Image, []string, error) {
+	intermediateImage, found, err := s.findIntermediateImage(stageAlias)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: failed to find intermediate image for %q: %w", ErrStorage, stageAlias, err)
+	}
+	if !found {
+		// no intermediate image found for node — pass diffBase through unchanged
+		return diffBase, nil, nil
+	}
+
+	diffBaseLayer, err := s.store.Layer(diffBase.TopLayer)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: failed to get diff base layer: %w", ErrStorage, err)
+	}
+
+	interLayer, err := s.store.Layer(intermediateImage.TopLayer)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: failed to get intermediate layer: %w", ErrStorage, err)
+	}
+
+	included, err := s.saveDiff(contentPath, interLayer.ID, diffBaseLayer.ID, sources)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return intermediateImage, included, nil
 }
 
 // IsPathUnderPattern reports whether path matches pattern exactly (via filepath.Match)
