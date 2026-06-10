@@ -1235,7 +1235,6 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages / external content] Content traced through intermediate builder via COPY chain with external image": {
-			SkipTestReason: "[Priority: high] chained stages not yet supported, bug with external image in builder stage unresolved",
 			TestImage: BuildDefinition{
 				Tag: "test-chain-with-external",
 				ContainerfileContent: `FROM localhost/base-img:latest AS builder
@@ -1285,13 +1284,11 @@ func TestIntegration(t *testing.T) {
 						PackageURL: "pkg:golang/golang.org/x/text@v0.18.0",
 						OriginType: "external",
 						Pullspec:   "localhost/in-chain-ext@sha256:dummy",
-						StageAlias: "builder",
 					},
 				},
 			},
 		},
 		"[External content] External COPY in final stage": {
-			SkipTestReason: "[Priority: medium] origin_type 'external' not yet implemented - capo reports external content as 'builder'. Works otherwise.",
 			TestImage: BuildDefinition{
 				Tag: "test-external-copy-final",
 				ContainerfileContent: `FROM localhost/builder-base:latest AS builder
@@ -1348,7 +1345,6 @@ func TestIntegration(t *testing.T) {
 		// modeled as DESCENDANT_OF builder base image — external image content in a
 		// builder stage has no such relationship to the builder base.
 		"[External content] External COPY in builder stage - content traced through builder to final": {
-			SkipTestReason: "[Priority: high] bug: traceSource panic on nil stage from external COPY --from in builder",
 			TestImage: BuildDefinition{
 				Tag: "test-external-copy-in-builder",
 				ContainerfileContent: `FROM localhost/builder-base:latest AS builder
