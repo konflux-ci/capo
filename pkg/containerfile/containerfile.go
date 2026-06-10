@@ -77,8 +77,14 @@ const (
 type Stage struct {
 	// Alias of the builder stage or equal to FinalStage if final.
 	Alias string
-	// Base image for the stage. Can be a pullspec, "scratch", or "oci-archive".
+	// Base image pullspec for this stage. For chained stages (FROM parent AS child),
+	// this is resolved through the chain to the ultimate builder base image pullspec.
 	Base string
+	// Raw FROM reference as it appears in the Containerfile. Can be a pullspec
+	// or a stage alias. For non-chained stages, BaseRef == Base.
+	BaseRef string
+	// Zero-based index of this builder stage. Final stage has Index -1.
+	Index int
 	// Builder copies in this stage in order (top to bottom in the containerfile).
 	Copies []Copy
 	// Mount references in this stage.
@@ -136,11 +142,17 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 		return nil, err
 	}
 	stageNames := make([]string, 0)
+	// maps stage alias to root base pullspec (resolved through chain)
+	aliasToBase := make(map[string]string)
 
 	for i, s := range rawStages {
 		stageNames = append(stageNames, s.Name)
-		if i == len(rawStages)-1 {
+
+		isFinal := i == len(rawStages)-1
+		index := i
+		if isFinal {
 			s.Name = FinalStage
+			index = -1
 		}
 
 		copies, mounts, err := parseStageRefs(s, stageNames)
@@ -148,11 +160,22 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 			return res, err
 		}
 
+		baseRef := pullspecs[i]
+		base := baseRef
+		// resolve chained stages: if baseRef is an alias of a previous stage,
+		// use its already-resolved root base pullspec
+		if resolvedBase, isChained := aliasToBase[baseRef]; isChained {
+			base = resolvedBase
+		}
+		aliasToBase[s.Name] = base
+
 		res = append(res, Stage{
-			Alias:  s.Name,
-			Base:   pullspecs[i],
-			Copies: copies,
-			Mounts: mounts,
+			Alias:   s.Name,
+			Base:    base,
+			BaseRef: baseRef,
+			Index:   index,
+			Copies:  copies,
+			Mounts:  mounts,
 		})
 	}
 
