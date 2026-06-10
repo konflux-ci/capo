@@ -40,13 +40,11 @@ func parseArgs() (args, error) {
 	buildArgs := make(map[string]string)
 	flag.Func(
 		"build-arg",
-		"Build argument passed to buildah in the form KEY=VALUE. Can be used multiple times.",
+		"Build argument in the form KEY=VALUE or bare KEY (inherits from environment). Can be used multiple times.",
 		func(s string) error {
-			key, value, err := buildargs.ParseBuildArgLine(s)
-			if err != nil {
+			if err := buildargs.ReadBuildArg(s, buildArgs); err != nil {
 				return ErrBuildArg
 			}
-			buildArgs[key] = value
 			return nil
 		},
 	)
@@ -127,11 +125,11 @@ func main() {
 		}
 	}()
 
-	stages, err := containerfile.Parse(r, buildOptsFromArgs(args))
+	cf, err := containerfile.Parse(r, buildOptsFromArgs(args))
 	if err != nil {
 		log.Fatalf("Failed to parse containerfile %+v", err)
 	}
-	log.Printf("Parsed stages: %+v", stages)
+	log.Printf("Parsed stages: %+v", cf.Stages)
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
@@ -142,7 +140,7 @@ func main() {
 		log.Fatalf("Failed to create scanner: %+v", err)
 	}
 
-	pkgMetadata, err := scanner.Scan(stages)
+	pkgMetadata, err := scanner.Scan(cf)
 	if err != nil {
 		log.Fatalf("Failed to scan stages: %+v", err)
 	}

@@ -4,11 +4,14 @@ package containerfile
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 func TestParseBuiltinArgs(t *testing.T) {
@@ -19,7 +22,7 @@ func TestParseBuiltinArgs(t *testing.T) {
 
 	expectedPullspec := fmt.Sprintf("docker.io/library/alpine:%s", runtime.GOARCH)
 
-	expected := []Stage{
+	expected := Containerfile{Stages: []Stage{
 		{
 			Alias:  "builder",
 			Base:   expectedPullspec,
@@ -38,7 +41,7 @@ func TestParseBuiltinArgs(t *testing.T) {
 			},
 			Mounts: []Mount{},
 		},
-	}
+	}}
 
 	reader := strings.NewReader(containerfile)
 	actual, err := Parse(reader, BuildOptions{})
@@ -47,7 +50,7 @@ func TestParseBuiltinArgs(t *testing.T) {
 		t.Fatalf("Parsing failed: %v", err)
 	}
 
-	if diff := cmp.Diff(expected, actual); diff != "" {
+	if diff := cmp.Diff(expected, actual, cmpopts.EquateEmpty()); diff != "" {
 		t.Errorf("Parse() result mismatch (-want +got):\n%s", diff)
 	}
 }
@@ -57,7 +60,7 @@ func TestParse(t *testing.T) {
 	tests := map[string]struct {
 		containerfile string
 		buildOptions  BuildOptions
-		expected      []Stage
+		expected      Containerfile
 	}{
 		"arg evaluation": {
 			containerfile: `ARG FEDORA_REPO="docker.io/library/fedora"
@@ -71,7 +74,7 @@ func TestParse(t *testing.T) {
 					"FEDORA_TAG": "latest",
 				},
 			},
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "builder",
 					Base:   "docker.io/library/alpine:latest",
@@ -97,7 +100,7 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
 		},
 		"build target": {
 			containerfile: `FROM docker.io/library/fedora:latest AS builder
@@ -107,7 +110,7 @@ func TestParse(t *testing.T) {
 			buildOptions: BuildOptions{
 				Target: "builder",
 			},
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias: FinalStage,
 					Base:  "docker.io/library/fedora:latest",
@@ -121,7 +124,7 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
 		},
 		"copies in final stage only": {
 			containerfile: `FROM docker.io/library/fedora:latest AS builder1
@@ -129,7 +132,7 @@ func TestParse(t *testing.T) {
 							FROM scratch
 							COPY --from=builder1 /usr/bin/oras /usr/bin/oras
 							COPY --from=builder2 /usr/bin/helm /usr/bin/helm`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "builder1",
 					Base:   "docker.io/library/fedora:latest",
@@ -161,7 +164,7 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
 		},
 		"recursive multi-stage file copy": {
 			containerfile: `FROM docker.io/library/fedora:latest AS builder1
@@ -169,7 +172,7 @@ func TestParse(t *testing.T) {
 							COPY --from=builder1 /usr/bin/oras /usr/bin/oras
 							FROM scratch
 							COPY --from=builder2 /usr/bin/oras /usr/bin/oras`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "builder1",
 					Base:   "docker.io/library/fedora:latest",
@@ -202,7 +205,7 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
 		},
 		"workdir switching - only relative paths": {
 			containerfile: `FROM docker.io/alpine/helm:latest AS builder
@@ -211,7 +214,7 @@ func TestParse(t *testing.T) {
 							COPY --from=builder /usr/bin/go ./go
 							WORKDIR bin/
 							COPY --from=builder /usr/bin/capo ../..`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "builder",
 					Base:   "docker.io/alpine/helm:latest",
@@ -239,7 +242,7 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
 		},
 		"relative paths with workdir switching": {
 			containerfile: `FROM docker.io/alpine/helm:latest AS builder
@@ -255,7 +258,7 @@ func TestParse(t *testing.T) {
 							COPY --from=builder /usr/bin/oras .
 							WORKDIR app/
 							COPY --from=builder /usr/bin/mage .`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "builder",
 					Base:   "docker.io/alpine/helm:latest",
@@ -325,7 +328,7 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
 		},
 		"recursive multi-stage file copy - mixed sources": {
 			containerfile: `FROM docker.io/library/fedora:latest AS builder1
@@ -333,7 +336,7 @@ func TestParse(t *testing.T) {
 							COPY --from=builder1 /usr/bin/oras /usr/bin/oras
 							FROM scratch
 							COPY --from=builder2 /usr/bin/oras /usr/bin/helm /app/`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "builder1",
 					Base:   "docker.io/library/fedora:latest",
@@ -366,7 +369,7 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
 		},
 		"multi-stage directory copy": {
 			containerfile: `FROM docker.io/library/fedora:latest AS builder1
@@ -375,7 +378,7 @@ func TestParse(t *testing.T) {
 							COPY --from=builder1 /bin/* /app/
 							FROM scratch
 							COPY --from=builder2 /app/ /app/`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "builder1",
 					Base:   "docker.io/library/fedora:latest",
@@ -414,13 +417,13 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
 		},
 		"COPY --from numeric stage index": {
 			containerfile: `FROM quay.io/rhel:9
 							FROM scratch
 							COPY --from=0 /usr/bin/binary /usr/bin/binary`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "0",
 					Base:   "quay.io/rhel:9",
@@ -440,13 +443,13 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
 		},
 		"COPY --from numeric index with named stage": {
 			containerfile: `FROM quay.io/rhel:9 AS builder
 							FROM scratch
 							COPY --from=0 /usr/bin/binary /usr/bin/binary`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "builder",
 					Base:   "quay.io/rhel:9",
@@ -466,12 +469,12 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
 		},
 		"COPY --from numeric index out of bounds is external image": {
 			containerfile: `FROM quay.io/rhel:9
 							COPY --from=5 /usr/bin/binary /usr/bin/binary`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias: FinalStage,
 					Base:  "quay.io/rhel:9",
@@ -485,12 +488,12 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
 		},
 		"RUN --mount=from external image": {
 			containerfile: `FROM quay.io/rhel:9
 							RUN --mount=type=bind,from=quay.io/tools:1,src=/bin/tool,dst=/tmp/tool /tmp/tool --version`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  FinalStage,
 					Base:   "quay.io/rhel:9",
@@ -499,13 +502,13 @@ func TestParse(t *testing.T) {
 						{From: "quay.io/tools:1", Type: MountTypeExternal},
 					},
 				},
-			},
+			}},
 		},
 		"RUN --mount=from builder stage": {
 			containerfile: `FROM quay.io/rhel:9 AS builder
 							FROM scratch
 							RUN --mount=type=bind,from=builder,src=/app,dst=/app ls /app`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "builder",
 					Base:   "quay.io/rhel:9",
@@ -520,13 +523,13 @@ func TestParse(t *testing.T) {
 						{From: "builder", Type: MountTypeBuilder},
 					},
 				},
-			},
+			}},
 		},
 		"RUN --mount=from numeric stage index": {
 			containerfile: `FROM quay.io/rhel:9 AS builder
 							FROM scratch
 							RUN --mount=type=bind,from=0,src=/app,dst=/app ls /app`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "builder",
 					Base:   "quay.io/rhel:9",
@@ -541,20 +544,20 @@ func TestParse(t *testing.T) {
 						{From: "0", Type: MountTypeBuilder},
 					},
 				},
-			},
+			}},
 		},
 		"duplicate stage names": {
 			containerfile: `FROM quay.io/rhel:9 AS builder
 							FROM quay.io/fedora:42 AS builder
 							FROM scratch
 							COPY --from=builder /app /app`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{Alias: "builder", Base: "quay.io/rhel:9", Copies: []Copy{}, Mounts: []Mount{}},
 				{Alias: "builder", Base: "quay.io/fedora:42", Copies: []Copy{}, Mounts: []Mount{}},
 				{Alias: FinalStage, Base: "scratch", Copies: []Copy{
 					{From: "builder", Sources: []string{"/app"}, Destination: "/app", Type: CopyTypeBuilder},
 				}, Mounts: []Mount{}},
-			},
+			}},
 		},
 		"COPY source paths are normalized to absolute clean paths": {
 			containerfile: `FROM docker.io/library/alpine:latest AS builder
@@ -562,7 +565,7 @@ func TestParse(t *testing.T) {
 							COPY --from=builder relative/auntie/jane /dest1
 							COPY --from=builder /foo//bar /dest2
 							COPY --from=builder /foo/baz/../bar /dest3`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "builder",
 					Base:   "docker.io/library/alpine:latest",
@@ -594,7 +597,98 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
+		},
+		"single label": {
+			containerfile: `FROM quay.io/rhel:9
+							LABEL version=1.0`,
+			expected: Containerfile{Stages: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"version": "1.0"},
+				},
+			}},
+		},
+		"multiple labels on one line": {
+			containerfile: `FROM quay.io/rhel:9
+							LABEL version=1.0 vendor="Red Hat"`,
+			expected: Containerfile{Stages: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"version": "1.0", "vendor": "Red Hat"},
+				},
+			}},
+		},
+		"multiple LABEL instructions merge": {
+			containerfile: `FROM quay.io/rhel:9
+							LABEL version=1.0
+							LABEL vendor="Red Hat"`,
+			expected: Containerfile{Stages: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"version": "1.0", "vendor": "Red Hat"},
+				},
+			}},
+		},
+		"label with ARG substitution": {
+			containerfile: `ARG VER=2.0
+							FROM quay.io/rhel:9
+							LABEL version=$VER`,
+			buildOptions: BuildOptions{},
+			expected: Containerfile{Stages: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"version": "2.0"},
+				},
+			}},
+		},
+		"later label overrides earlier": {
+			containerfile: `FROM quay.io/rhel:9
+							LABEL version=1.0
+							LABEL version=2.0`,
+			expected: Containerfile{Stages: []Stage{
+				{
+					Alias:  FinalStage,
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"version": "2.0"},
+				},
+			}},
+		},
+		"labels are per-stage": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							LABEL stage=builder
+							FROM scratch
+							LABEL stage=final`,
+			expected: Containerfile{Stages: []Stage{
+				{
+					Alias:  "builder",
+					Base:   "quay.io/rhel:9",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"stage": "builder"},
+				},
+				{
+					Alias:  FinalStage,
+					Base:   "scratch",
+					Copies: []Copy{},
+					Mounts: []Mount{},
+					Labels: map[string]string{"stage": "final"},
+				},
+			}},
 		},
 		"complex multi-stage with multiple final copies": {
 			containerfile: `FROM docker.io/library/fedora:latest AS builder1
@@ -604,7 +698,7 @@ func TestParse(t *testing.T) {
 							COPY --from=builder1 /lib/libc.so /lib/libc.so
 							COPY --from=builder2 /tools/ /usr/bin/
 							COPY --from=builder2 /usr/bin/helm /usr/bin/helm`,
-			expected: []Stage{
+			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:  "builder1",
 					Base:   "docker.io/library/fedora:latest",
@@ -649,7 +743,7 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{},
 				},
-			},
+			}},
 		},
 	}
 
@@ -662,9 +756,181 @@ func TestParse(t *testing.T) {
 				t.Fatalf("Parsing failed: %v", err)
 			}
 
-			if diff := cmp.Diff(test.expected, actual); diff != "" {
+			if diff := cmp.Diff(test.expected, actual, cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("Parse() result mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func writeBuildArgFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "build-args")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing build arg file: %v", err)
+	}
+	return path
+}
+
+func TestParseBuildArgFromFile(t *testing.T) {
+	t.Parallel()
+	argFile := writeBuildArgFile(t, "IMAGE=docker.io/library/alpine:3.20\n")
+
+	containerfile := `ARG IMAGE
+					   FROM ${IMAGE}`
+
+	expected := Containerfile{Stages: []Stage{
+		{
+			Alias:  FinalStage,
+			Base:   "docker.io/library/alpine:3.20",
+			Copies: []Copy{},
+			Mounts: []Mount{},
+		},
+	}}
+
+	actual, err := Parse(strings.NewReader(containerfile), BuildOptions{
+		BuildArgFilePath: argFile,
+	})
+	if err != nil {
+		t.Fatalf("Parsing failed: %v", err)
+	}
+	if diff := cmp.Diff(expected, actual, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseBuildArgCLIOverridesFile(t *testing.T) {
+	t.Parallel()
+	argFile := writeBuildArgFile(t, "TAG=file-tag\n")
+
+	containerfile := `ARG TAG
+					   FROM docker.io/library/alpine:${TAG}`
+
+	expected := Containerfile{Stages: []Stage{
+		{
+			Alias:  FinalStage,
+			Base:   "docker.io/library/alpine:cli-tag",
+			Copies: []Copy{},
+			Mounts: []Mount{},
+		},
+	}}
+
+	actual, err := Parse(strings.NewReader(containerfile), BuildOptions{
+		BuildArgFilePath: argFile,
+		Args:             map[string]string{"TAG": "cli-tag"},
+	})
+	if err != nil {
+		t.Fatalf("Parsing failed: %v", err)
+	}
+	if diff := cmp.Diff(expected, actual, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseBuildArgEnvResolution(t *testing.T) {
+	t.Setenv("MY_TAG", "envtag")
+
+	argFile := writeBuildArgFile(t, "MY_TAG\n")
+
+	containerfile := `ARG MY_TAG
+					   FROM docker.io/library/alpine:${MY_TAG}`
+
+	expected := Containerfile{Stages: []Stage{
+		{
+			Alias:  FinalStage,
+			Base:   "docker.io/library/alpine:envtag",
+			Copies: []Copy{},
+			Mounts: []Mount{},
+		},
+	}}
+
+	actual, err := Parse(strings.NewReader(containerfile), BuildOptions{
+		BuildArgFilePath: argFile,
+	})
+	if err != nil {
+		t.Fatalf("Parsing failed: %v", err)
+	}
+	if diff := cmp.Diff(expected, actual, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseBuildArgFileEmptyValueStaysEmpty(t *testing.T) {
+	t.Setenv("MY_TAG", "fromenv")
+
+	argFile := writeBuildArgFile(t, "MY_TAG=\n")
+
+	containerfile := `ARG MY_TAG=default
+					   FROM scratch
+					   LABEL tag=$MY_TAG`
+
+	expected := Containerfile{Stages: []Stage{
+		{
+			Alias:  FinalStage,
+			Base:   "scratch",
+			Copies: []Copy{},
+			Mounts: []Mount{},
+			Labels: map[string]string{"tag": ""},
+		},
+	}}
+
+	actual, err := Parse(strings.NewReader(containerfile), BuildOptions{
+		BuildArgFilePath: argFile,
+	})
+	if err != nil {
+		t.Fatalf("Parsing failed: %v", err)
+	}
+	if diff := cmp.Diff(expected, actual, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseBuildArgFileNotFound(t *testing.T) {
+	t.Parallel()
+	containerfile := `FROM scratch`
+
+	_, err := Parse(strings.NewReader(containerfile), BuildOptions{
+		BuildArgFilePath: "/nonexistent/path/build-args",
+	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent build arg file, got nil")
+	}
+}
+
+func TestParseBuildArgMergeWithEnv(t *testing.T) {
+	t.Setenv("C", "from-env-c")
+
+	// File: A=from-file, B= (explicit empty), C (bare key → inherits from env)
+	argFile := writeBuildArgFile(t, "A=from-file\nB=\nC\n")
+
+	containerfile := `ARG A
+					   ARG B
+					   ARG C
+					   FROM scratch
+					   LABEL a=$A b=$B c=$C`
+
+	expected := Containerfile{Stages: []Stage{
+		{
+			Alias:  FinalStage,
+			Base:   "scratch",
+			Copies: []Copy{},
+			Mounts: []Mount{},
+			Labels: map[string]string{
+				"a": "from-file",
+				"b": "from-cli",
+				"c": "from-env-c",
+			},
+		},
+	}}
+
+	actual, err := Parse(strings.NewReader(containerfile), BuildOptions{
+		BuildArgFilePath: argFile,
+		Args:             map[string]string{"B": "from-cli"},
+	})
+	if err != nil {
+		t.Fatalf("Parsing failed: %v", err)
+	}
+	if diff := cmp.Diff(expected, actual, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
 	}
 }

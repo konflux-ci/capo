@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/konflux-ci/capo/pkg/buildargs"
 	"github.com/openshift/imagebuilder"
 	"github.com/openshift/imagebuilder/dockerfile/parser"
 )
@@ -73,7 +75,15 @@ const (
 	MountTypeExternal
 )
 
-// A builder or final stage in a Containerfile
+// Containerfile is a parsed representation of a Containerfile (Dockerfile),
+// containing all build stages in order.
+type Containerfile struct {
+	// Stages in the containerfile, in order. The last stage is the final
+	// (output) stage.
+	Stages []Stage
+}
+
+// A builder or final stage in a Containerfile.
 type Stage struct {
 	// Alias of the builder stage or equal to FinalStage if final.
 	Alias string
@@ -83,12 +93,22 @@ type Stage struct {
 	Copies []Copy
 	// Mount references in this stage.
 	Mounts []Mount
+	// Labels set via LABEL instructions in this stage.
+	Labels map[string]string
 }
 
 // BuildOptions controls how a Containerfile is parsed.
 type BuildOptions struct {
-	// Build arguments passed to buildah for the build
+	// Build arguments passed to buildah for the build.
+	// Environment variable resolution for bare KEY args (without =) must be
+	// done before passing args here (see buildargs.ReadBuildArg).
 	Args map[string]string
+
+	// Path to the build arg file to parse for args.
+	// Bare KEY lines (without =) in the file inherit from the host
+	// environment, matching buildah semantics.
+	BuildArgFilePath string
+
 	// Target stage of the buildah build
 	Target string
 }
@@ -102,12 +122,21 @@ var ErrParse = errors.New("error while parsing containerfile")
 
 // Parse reads a Containerfile from the passed reader and uses the passed
 // BuildOptions to parse the Containerfile into stages.
-func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
+func Parse(reader io.Reader, opts BuildOptions) (Containerfile, error) {
 	res := make([]Stage, 0)
+
+	args := opts.Args
+	if opts.BuildArgFilePath != "" {
+		fileArgs, err := buildargs.ParseBuildArgFile(opts.BuildArgFilePath)
+		if err != nil {
+			return Containerfile{}, fmt.Errorf("parsing build-arg-file: %w", err)
+		}
+		args = buildargs.MergeBuildArgs(fileArgs, opts.Args)
+	}
 
 	node, err := imagebuilder.ParseDockerfile(reader)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParse, err)
+		return Containerfile{}, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 
 	// TODO: At this stage, Buildah code takes into account OS and ARCH CLI args
@@ -117,23 +146,23 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 	// but I'm keeping this here as a guideline.
 	// https://github.com/containers/buildah/blob/main/imagebuildah/build.go#L431
 
-	builder := imagebuilder.NewBuilder(opts.Args)
+	builder := imagebuilder.NewBuilder(args)
 	rawStages, err := imagebuilder.NewStages(node, builder)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrParse, err)
+		return Containerfile{}, fmt.Errorf("%w: %w", ErrParse, err)
 	}
 
 	if opts.Target != "" {
 		stagesTargeted, ok := rawStages.ThroughTarget(opts.Target)
 		if !ok {
-			return nil, fmt.Errorf("%w: %s", ErrTargetNotFound, opts.Target)
+			return Containerfile{}, fmt.Errorf("%w: %s", ErrTargetNotFound, opts.Target)
 		}
 		rawStages = stagesTargeted
 	}
 
 	pullspecs, err := resolvePullspecs(rawStages)
 	if err != nil {
-		return nil, err
+		return Containerfile{}, err
 	}
 	stageNames := make([]string, 0)
 
@@ -143,20 +172,15 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 			s.Name = FinalStage
 		}
 
-		copies, mounts, err := parseStageRefs(s, stageNames)
+		stage, err := parseStage(s, pullspecs[i], stageNames)
 		if err != nil {
-			return res, err
+			return Containerfile{Stages: res}, err
 		}
 
-		res = append(res, Stage{
-			Alias:  s.Name,
-			Base:   pullspecs[i],
-			Copies: copies,
-			Mounts: mounts,
-		})
+		res = append(res, stage)
 	}
 
-	return res, nil
+	return Containerfile{Stages: res}, nil
 }
 
 // argsMapToSlice returns the contents of a map[string]string as a slice of keys
@@ -189,8 +213,8 @@ func resolvePullspecs(stages []imagebuilder.Stage) ([]string, error) {
 	return res, nil
 }
 
-// parseStageRefs parses the AST for the passed imagebuilder.Stage and
-// returns slices of Copy and Mount structs found in the stage.
+// parseStage parses the AST for the passed imagebuilder.Stage and returns a
+// Stage struct with its copies, mounts, and labels populated.
 //
 // A COPY command is builder-type if the "--from" flag is specified and it copies from
 // a builder stage or directly from an image.
@@ -198,9 +222,10 @@ func resolvePullspecs(stages []imagebuilder.Stage) ([]string, error) {
 // Uses the passed previous stageNames to specify whether references are to a stage
 // or directly to an image.
 // WARNING: named contexts in the Containerfile are not supported
-func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount, error) {
+func parseStage(s imagebuilder.Stage, pullspec string, stageNames []string) (Stage, error) {
 	copies := make([]Copy, 0)
 	mounts := make([]Mount, 0)
+	labels := make(map[string]string)
 	workdir := ""
 	headingEnv := argsMapToSlice(s.Builder.HeadingArgs)
 	userEnv := argsMapToSlice(s.Builder.Args)
@@ -208,6 +233,11 @@ func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount,
 	// user provided args override the heading ARGs,
 	// so they're appended second to take priority
 	env := append(headingEnv, userEnv...)
+
+	stage := Stage{
+		Alias: s.Name,
+		Base:  pullspec,
+	}
 
 	for _, child := range s.Node.Children {
 		switch child.Value {
@@ -222,7 +252,7 @@ func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount,
 		case "copy":
 			cp, err := parseCopy(child, workdir, env, stageNames)
 			if err != nil {
-				return copies, mounts, err
+				return stage, err
 			}
 
 			if cp != nil {
@@ -232,13 +262,24 @@ func parseStageRefs(s imagebuilder.Stage, stageNames []string) ([]Copy, []Mount,
 		case "run":
 			runMounts, err := parseMounts(child, env, stageNames)
 			if err != nil {
-				return copies, mounts, err
+				return stage, err
 			}
 			mounts = append(mounts, runMounts...)
+
+		case "label":
+			parsed, err := parseLabels(child, env)
+			if err != nil {
+				return stage, err
+			}
+			maps.Copy(labels, parsed)
 		}
 	}
 
-	return copies, mounts, nil
+	stage.Copies = copies
+	stage.Mounts = mounts
+	stage.Labels = labels
+
+	return stage, nil
 }
 
 // isStageRef returns true if ref matches a known stage, either by name or by
@@ -361,4 +402,22 @@ func parseCopy(node *parser.Node, workdir string, env []string, stageNames []str
 	}
 
 	return nil, nil
+}
+
+func parseLabels(node *parser.Node, env []string) (map[string]string, error) {
+	labels := make(map[string]string)
+	curr := node.Next
+	for curr != nil && curr.Next != nil {
+		key, err := imagebuilder.ProcessWord(curr.Value, env)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrParse, err)
+		}
+		val, err := imagebuilder.ProcessWord(curr.Next.Value, env)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrParse, err)
+		}
+		labels[key] = val
+		curr = curr.Next.Next
+	}
+	return labels, nil
 }
