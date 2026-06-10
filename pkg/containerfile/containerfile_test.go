@@ -4,6 +4,8 @@ package containerfile
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -956,5 +958,177 @@ func TestParse(t *testing.T) {
 				t.Errorf("Parse() result mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func writeBuildArgFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "build-args")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("writing build arg file: %v", err)
+	}
+	return path
+}
+
+func TestParseBuildArgFromFile(t *testing.T) {
+	t.Parallel()
+	argFile := writeBuildArgFile(t, "IMAGE=docker.io/library/alpine:3.20\n")
+
+	containerfile := `ARG IMAGE
+					   FROM ${IMAGE}`
+
+	expected := Containerfile{Stages: []Stage{
+		{
+			Alias:  FinalStage,
+			Base:   "docker.io/library/alpine:3.20",
+			Copies: []Copy{},
+			Mounts: []Mount{},
+		},
+	}}
+
+	actual, err := Parse(strings.NewReader(containerfile), BuildOptions{
+		BuildArgFilePath: argFile,
+	})
+	if err != nil {
+		t.Fatalf("Parsing failed: %v", err)
+	}
+	if diff := cmp.Diff(expected, actual, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseBuildArgCLIOverridesFile(t *testing.T) {
+	t.Parallel()
+	argFile := writeBuildArgFile(t, "TAG=file-tag\n")
+
+	containerfile := `ARG TAG
+					   FROM docker.io/library/alpine:${TAG}`
+
+	expected := Containerfile{Stages: []Stage{
+		{
+			Alias:  FinalStage,
+			Base:   "docker.io/library/alpine:cli-tag",
+			Copies: []Copy{},
+			Mounts: []Mount{},
+		},
+	}}
+
+	actual, err := Parse(strings.NewReader(containerfile), BuildOptions{
+		BuildArgFilePath: argFile,
+		Args:             map[string]string{"TAG": "cli-tag"},
+	})
+	if err != nil {
+		t.Fatalf("Parsing failed: %v", err)
+	}
+	if diff := cmp.Diff(expected, actual, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseBuildArgEnvResolution(t *testing.T) {
+	t.Setenv("MY_TAG", "envtag")
+
+	argFile := writeBuildArgFile(t, "MY_TAG\n")
+
+	containerfile := `ARG MY_TAG
+					   FROM docker.io/library/alpine:${MY_TAG}`
+
+	expected := Containerfile{Stages: []Stage{
+		{
+			Alias:  FinalStage,
+			Base:   "docker.io/library/alpine:envtag",
+			Copies: []Copy{},
+			Mounts: []Mount{},
+		},
+	}}
+
+	actual, err := Parse(strings.NewReader(containerfile), BuildOptions{
+		BuildArgFilePath: argFile,
+	})
+	if err != nil {
+		t.Fatalf("Parsing failed: %v", err)
+	}
+	if diff := cmp.Diff(expected, actual, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseBuildArgFileEmptyValueStaysEmpty(t *testing.T) {
+	t.Setenv("MY_TAG", "fromenv")
+
+	argFile := writeBuildArgFile(t, "MY_TAG=\n")
+
+	containerfile := `ARG MY_TAG=default
+					   FROM scratch
+					   LABEL tag=$MY_TAG`
+
+	expected := Containerfile{Stages: []Stage{
+		{
+			Alias:  FinalStage,
+			Base:   "scratch",
+			Copies: []Copy{},
+			Mounts: []Mount{},
+			Labels: map[string]string{"tag": ""},
+		},
+	}}
+
+	actual, err := Parse(strings.NewReader(containerfile), BuildOptions{
+		BuildArgFilePath: argFile,
+	})
+	if err != nil {
+		t.Fatalf("Parsing failed: %v", err)
+	}
+	if diff := cmp.Diff(expected, actual, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseBuildArgFileNotFound(t *testing.T) {
+	t.Parallel()
+	containerfile := `FROM scratch`
+
+	_, err := Parse(strings.NewReader(containerfile), BuildOptions{
+		BuildArgFilePath: "/nonexistent/path/build-args",
+	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent build arg file, got nil")
+	}
+}
+
+func TestParseBuildArgMergeWithEnv(t *testing.T) {
+	t.Setenv("C", "from-env-c")
+
+	// File: A=from-file, B= (explicit empty), C (bare key → inherits from env)
+	argFile := writeBuildArgFile(t, "A=from-file\nB=\nC\n")
+
+	containerfile := `ARG A
+					   ARG B
+					   ARG C
+					   FROM scratch
+					   LABEL a=$A b=$B c=$C`
+
+	expected := Containerfile{Stages: []Stage{
+		{
+			Alias:  FinalStage,
+			Base:   "scratch",
+			Copies: []Copy{},
+			Mounts: []Mount{},
+			Labels: map[string]string{
+				"a": "from-file",
+				"b": "from-cli",
+				"c": "from-env-c",
+			},
+		},
+	}}
+
+	actual, err := Parse(strings.NewReader(containerfile), BuildOptions{
+		BuildArgFilePath: argFile,
+		Args:             map[string]string{"B": "from-cli"},
+	})
+	if err != nil {
+		t.Fatalf("Parsing failed: %v", err)
+	}
+	if diff := cmp.Diff(expected, actual, cmpopts.EquateEmpty()); diff != "" {
+		t.Errorf("Parse() mismatch (-want +got):\n%s", diff)
 	}
 }

@@ -12,14 +12,38 @@ import (
 // ErrInvalidBuildArg is returned when a build argument line is not in KEY=VALUE format.
 var ErrInvalidBuildArg = errors.New("invalid build arg")
 
-// ParseBuildArgLine parses a single KEY=VALUE line into its key and value.
-// Values may contain '=' characters.
-func ParseBuildArgLine(s string) (string, string, error) {
-	key, value, ok := strings.Cut(s, "=")
-	if !ok || key == "" {
-		return "", "", fmt.Errorf("%w: expected KEY=VALUE, got %q", ErrInvalidBuildArg, s)
+
+// ReadBuildArg parses a build argument and writes it into args, matching
+// buildah semantics: KEY=VALUE stores the literal value (even if empty),
+// bare KEY inherits from the host environment (or deletes the key if unset).
+func ReadBuildArg(arg string, args map[string]string) error {
+	key, value, hasValue, err := parseBuildArgLine(arg)
+	if err != nil {
+		return err
 	}
-	return key, value, nil
+	if hasValue {
+		args[key] = value
+	} else if val, ok := os.LookupEnv(key); ok {
+		args[key] = val
+	} else {
+		delete(args, key)
+	}
+	return nil
+}
+
+// parseBuildArgLine parses a single build argument string.
+// It accepts both KEY=VALUE (explicit value) and KEY (no equals, inherit from
+// environment). The hasValue return indicates whether an explicit value was
+// provided: true for KEY= or KEY=VALUE, false for bare KEY.
+func parseBuildArgLine(s string) (key string, value string, hasValue bool, err error) {
+	k, v, ok := strings.Cut(s, "=")
+	if k == "" {
+		return "", "", false, fmt.Errorf("%w: empty key in %q", ErrInvalidBuildArg, s)
+	}
+	if !ok {
+		return k, "", false, nil
+	}
+	return k, v, true, nil
 }
 
 // ParseBuildArgFile reads a file of build arguments, one KEY=VALUE per line.
@@ -43,11 +67,9 @@ func ParseBuildArgFile(path string) (result map[string]string, err error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		key, value, err := ParseBuildArgLine(line)
-		if err != nil {
+		if err := ReadBuildArg(line, args); err != nil {
 			return nil, fmt.Errorf("in %s: %w", path, err)
 		}
-		args[key] = value
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
