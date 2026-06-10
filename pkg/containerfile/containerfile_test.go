@@ -21,14 +21,18 @@ func TestParseBuiltinArgs(t *testing.T) {
 
 	expected := []Stage{
 		{
-			Alias:  "builder",
-			Base:   expectedPullspec,
-			Copies: []Copy{},
-			Mounts: []Mount{},
+			Alias:   "builder",
+			Base:    expectedPullspec,
+			BaseRef: expectedPullspec,
+			Index:   0,
+			Copies:  []Copy{},
+			Mounts:  []Mount{},
 		},
 		{
-			Alias: FinalStage,
-			Base:  "scratch",
+			Alias:   FinalStage,
+			Base:    "scratch",
+			BaseRef: "scratch",
+			Index:   -1,
 			Copies: []Copy{
 				{
 					From:        "builder",
@@ -73,14 +77,18 @@ func TestParse(t *testing.T) {
 			},
 			expected: []Stage{
 				{
-					Alias:  "builder",
-					Base:   "docker.io/library/alpine:latest",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder",
+					Base:    "docker.io/library/alpine:latest",
+					BaseRef: "docker.io/library/alpine:latest",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias: FinalStage,
-					Base:  "scratch",
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "docker.io/library/fedora:latest",
@@ -150,8 +158,10 @@ func TestParse(t *testing.T) {
 			},
 			expected: []Stage{
 				{
-					Alias: FinalStage,
-					Base:  "docker.io/library/fedora:latest",
+					Alias:   FinalStage,
+					Base:    "docker.io/library/fedora:latest",
+					BaseRef: "docker.io/library/fedora:latest",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "docker.io/library/alpine:latest",
@@ -172,20 +182,26 @@ func TestParse(t *testing.T) {
 							COPY --from=builder2 /usr/bin/helm /usr/bin/helm`,
 			expected: []Stage{
 				{
-					Alias:  "builder1",
-					Base:   "docker.io/library/fedora:latest",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder1",
+					Base:    "docker.io/library/fedora:latest",
+					BaseRef: "docker.io/library/fedora:latest",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias:  "builder2",
-					Base:   "docker.io/alpine/helm:latest",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder2",
+					Base:    "docker.io/alpine/helm:latest",
+					BaseRef: "docker.io/alpine/helm:latest",
+					Index:   1,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias: FinalStage,
-					Base:  "scratch",
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "builder1",
@@ -212,14 +228,18 @@ func TestParse(t *testing.T) {
 							COPY --from=builder2 /usr/bin/oras /usr/bin/oras`,
 			expected: []Stage{
 				{
-					Alias:  "builder1",
-					Base:   "docker.io/library/fedora:latest",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder1",
+					Base:    "docker.io/library/fedora:latest",
+					BaseRef: "docker.io/library/fedora:latest",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias: "builder2",
-					Base:  "docker.io/alpine/helm:latest",
+					Alias:   "builder2",
+					Base:    "docker.io/alpine/helm:latest",
+					BaseRef: "docker.io/alpine/helm:latest",
+					Index:   1,
 					Copies: []Copy{
 						{
 							From:        "builder1",
@@ -231,8 +251,10 @@ func TestParse(t *testing.T) {
 					Mounts: []Mount{},
 				},
 				{
-					Alias: FinalStage,
-					Base:  "scratch",
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "builder2",
@@ -254,14 +276,18 @@ func TestParse(t *testing.T) {
 							COPY --from=builder /usr/bin/capo ../..`,
 			expected: []Stage{
 				{
-					Alias:  "builder",
-					Base:   "docker.io/alpine/helm:latest",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder",
+					Base:    "docker.io/alpine/helm:latest",
+					BaseRef: "docker.io/alpine/helm:latest",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias: FinalStage,
-					Base:  "scratch",
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "builder",
@@ -298,14 +324,18 @@ func TestParse(t *testing.T) {
 							COPY --from=builder /usr/bin/mage .`,
 			expected: []Stage{
 				{
-					Alias:  "builder",
-					Base:   "docker.io/alpine/helm:latest",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder",
+					Base:    "docker.io/alpine/helm:latest",
+					BaseRef: "docker.io/alpine/helm:latest",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias: FinalStage,
-					Base:  "scratch",
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "builder",
@@ -376,14 +406,18 @@ func TestParse(t *testing.T) {
 							COPY --from=builder2 /usr/bin/oras /usr/bin/helm /app/`,
 			expected: []Stage{
 				{
-					Alias:  "builder1",
-					Base:   "docker.io/library/fedora:latest",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder1",
+					Base:    "docker.io/library/fedora:latest",
+					BaseRef: "docker.io/library/fedora:latest",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias: "builder2",
-					Base:  "docker.io/alpine/helm:latest",
+					Alias:   "builder2",
+					Base:    "docker.io/alpine/helm:latest",
+					BaseRef: "docker.io/alpine/helm:latest",
+					Index:   1,
 					Copies: []Copy{
 						{
 							From:        "builder1",
@@ -395,8 +429,10 @@ func TestParse(t *testing.T) {
 					Mounts: []Mount{},
 				},
 				{
-					Alias: FinalStage,
-					Base:  "scratch",
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "builder2",
@@ -418,14 +454,18 @@ func TestParse(t *testing.T) {
 							COPY --from=builder2 /app/ /app/`,
 			expected: []Stage{
 				{
-					Alias:  "builder1",
-					Base:   "docker.io/library/fedora:latest",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder1",
+					Base:    "docker.io/library/fedora:latest",
+					BaseRef: "docker.io/library/fedora:latest",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias: "builder2",
-					Base:  "docker.io/alpine/helm:latest",
+					Alias:   "builder2",
+					Base:    "docker.io/alpine/helm:latest",
+					BaseRef: "docker.io/alpine/helm:latest",
+					Index:   1,
 					Copies: []Copy{
 						{
 							From:        "builder1",
@@ -443,8 +483,10 @@ func TestParse(t *testing.T) {
 					Mounts: []Mount{},
 				},
 				{
-					Alias: FinalStage,
-					Base:  "scratch",
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "builder2",
@@ -463,14 +505,18 @@ func TestParse(t *testing.T) {
 							COPY --from=0 /usr/bin/binary /usr/bin/binary`,
 			expected: []Stage{
 				{
-					Alias:  "0",
-					Base:   "quay.io/rhel:9",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "0",
+					Base:    "quay.io/rhel:9",
+					BaseRef: "quay.io/rhel:9",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias: FinalStage,
-					Base:  "scratch",
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "0",
@@ -489,14 +535,18 @@ func TestParse(t *testing.T) {
 							COPY --from=0 /usr/bin/binary /usr/bin/binary`,
 			expected: []Stage{
 				{
-					Alias:  "builder",
-					Base:   "quay.io/rhel:9",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder",
+					Base:    "quay.io/rhel:9",
+					BaseRef: "quay.io/rhel:9",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias: FinalStage,
-					Base:  "scratch",
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "0",
@@ -514,8 +564,10 @@ func TestParse(t *testing.T) {
 							COPY --from=5 /usr/bin/binary /usr/bin/binary`,
 			expected: []Stage{
 				{
-					Alias: FinalStage,
-					Base:  "quay.io/rhel:9",
+					Alias:   FinalStage,
+					Base:    "quay.io/rhel:9",
+					BaseRef: "quay.io/rhel:9",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "5",
@@ -533,9 +585,11 @@ func TestParse(t *testing.T) {
 							RUN --mount=type=bind,from=quay.io/tools:1,src=/bin/tool,dst=/tmp/tool /tmp/tool --version`,
 			expected: []Stage{
 				{
-					Alias:  FinalStage,
-					Base:   "quay.io/rhel:9",
-					Copies: []Copy{},
+					Alias:   FinalStage,
+					Base:    "quay.io/rhel:9",
+					BaseRef: "quay.io/rhel:9",
+					Index:   -1,
+					Copies:  []Copy{},
 					Mounts: []Mount{
 						{FromRaw: "quay.io/tools:1", Pullspec: "quay.io/tools:1"},
 					},
@@ -548,15 +602,19 @@ func TestParse(t *testing.T) {
 							RUN --mount=type=bind,from=builder,src=/app,dst=/app ls /app`,
 			expected: []Stage{
 				{
-					Alias:  "builder",
-					Base:   "quay.io/rhel:9",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder",
+					Base:    "quay.io/rhel:9",
+					BaseRef: "quay.io/rhel:9",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias:  FinalStage,
-					Base:   "scratch",
-					Copies: []Copy{},
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
+					Copies:  []Copy{},
 					Mounts: []Mount{
 						{FromRaw: "builder"},
 					},
@@ -569,15 +627,19 @@ func TestParse(t *testing.T) {
 							RUN --mount=type=bind,from=0,src=/app,dst=/app ls /app`,
 			expected: []Stage{
 				{
-					Alias:  "builder",
-					Base:   "quay.io/rhel:9",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder",
+					Base:    "quay.io/rhel:9",
+					BaseRef: "quay.io/rhel:9",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias:  FinalStage,
-					Base:   "scratch",
-					Copies: []Copy{},
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
+					Copies:  []Copy{},
 					Mounts: []Mount{
 						{FromRaw: "0"},
 					},
@@ -590,9 +652,9 @@ func TestParse(t *testing.T) {
 							FROM scratch
 							COPY --from=builder /app /app`,
 			expected: []Stage{
-				{Alias: "builder", Base: "quay.io/rhel:9", Copies: []Copy{}, Mounts: []Mount{}},
-				{Alias: "builder", Base: "quay.io/fedora:42", Copies: []Copy{}, Mounts: []Mount{}},
-				{Alias: FinalStage, Base: "scratch", Copies: []Copy{
+				{Alias: "builder", Base: "quay.io/rhel:9", BaseRef: "quay.io/rhel:9", Index: 0, Copies: []Copy{}, Mounts: []Mount{}},
+				{Alias: "builder", Base: "quay.io/fedora:42", BaseRef: "quay.io/fedora:42", Index: 1, Copies: []Copy{}, Mounts: []Mount{}},
+				{Alias: FinalStage, Base: "scratch", BaseRef: "scratch", Index: -1, Copies: []Copy{
 					{From: "builder", Sources: []string{"/app"}, Destination: "/app", Type: CopyTypeBuilder},
 				}, Mounts: []Mount{}},
 			},
@@ -605,14 +667,18 @@ func TestParse(t *testing.T) {
 							COPY --from=builder /foo/baz/../bar /dest3`,
 			expected: []Stage{
 				{
-					Alias:  "builder",
-					Base:   "docker.io/library/alpine:latest",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder",
+					Base:    "docker.io/library/alpine:latest",
+					BaseRef: "docker.io/library/alpine:latest",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias: FinalStage,
-					Base:  "scratch",
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "builder",
@@ -647,14 +713,18 @@ func TestParse(t *testing.T) {
 							COPY --from=builder2 /usr/bin/helm /usr/bin/helm`,
 			expected: []Stage{
 				{
-					Alias:  "builder1",
-					Base:   "docker.io/library/fedora:latest",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder1",
+					Base:    "docker.io/library/fedora:latest",
+					BaseRef: "docker.io/library/fedora:latest",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias: "builder2",
-					Base:  "docker.io/alpine/helm:latest",
+					Alias:   "builder2",
+					Base:    "docker.io/alpine/helm:latest",
+					BaseRef: "docker.io/alpine/helm:latest",
+					Index:   1,
 					Copies: []Copy{
 						{
 							From:        "builder1",
@@ -666,8 +736,10 @@ func TestParse(t *testing.T) {
 					Mounts: []Mount{},
 				},
 				{
-					Alias: FinalStage,
-					Base:  "scratch",
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
 					Copies: []Copy{
 						{
 							From:        "builder1",

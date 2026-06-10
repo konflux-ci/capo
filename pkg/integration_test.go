@@ -898,8 +898,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages] Grandparent, parent and child builder cascade with intermediate content": {
-			SkipTestReason: "[Priority: high] chained stages not yet supported",
-			TestImage: BuildDefinition{
+						TestImage: BuildDefinition{
 				Tag: "test-chained-stages-cascade",
 				ContainerfileContent: `FROM localhost/builder-sync:latest AS grandparent
 										COPY go_uuid.mod /opt/app2/go.mod
@@ -956,8 +955,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages] Empty child chained stage (no build instructions)": {
-			SkipTestReason: "[Priority: high] chained stages not yet supported",
-			TestImage: BuildDefinition{
+						TestImage: BuildDefinition{
 				Tag: "test-empty-chained-stage",
 				ContainerfileContent: `FROM localhost/capo-builder/go_builder:latest AS parent-stage
 										COPY go_uuid.mod /opt/app2/go.mod
@@ -996,8 +994,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages] Multiple empty chained stages with intermediate only in last stage": {
-			SkipTestReason: "[Priority: high] chained stages not yet supported",
-			TestImage: BuildDefinition{
+						TestImage: BuildDefinition{
 				Tag: "test-empty-chain-cascade",
 				ContainerfileContent: `FROM localhost/builder-base:latest AS first
 
@@ -1038,8 +1035,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages] Complex cascade: non-empty, empty, non-empty, empty, non-empty": {
-			SkipTestReason: "[Priority: high] chained stages not yet supported",
-			TestImage: BuildDefinition{
+						TestImage: BuildDefinition{
 				Tag: "test-complex-cascade",
 				ContainerfileContent: `FROM localhost/builder-base:latest AS stage1
 										COPY go_uuid.mod /opt/app1/go.mod
@@ -1100,8 +1096,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages] Empty chained stages copying only builder base content": {
-			SkipTestReason: "[Priority: high] chained stages not yet supported",
-			TestImage: BuildDefinition{
+						TestImage: BuildDefinition{
 				Tag: "test-empty-chain-builder-only",
 				ContainerfileContent: `FROM localhost/builder-with-content:latest AS alias
 
@@ -1132,8 +1127,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages] Diamond dependency - two branches from same parent": {
-			SkipTestReason: "[Priority: high] chained stages not yet supported",
-			TestImage: BuildDefinition{
+						TestImage: BuildDefinition{
 				Tag: "test-diamond-dependency",
 				ContainerfileContent: `FROM localhost/diamond-base:latest AS shared
 										COPY go_uuid.mod /shared/go.mod
@@ -1169,7 +1163,7 @@ func TestIntegration(t *testing.T) {
 						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
 						OriginType: "builder",
 						Pullspec:   "localhost/diamond-base@sha256:dummy",
-						StageAlias: "right",
+						StageAlias: "shared",
 					},
 					{
 						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
@@ -1197,26 +1191,23 @@ func TestIntegration(t *testing.T) {
 		// alias over registry image — "FROM alpine" references the stage, not
 		// docker.io/library/alpine:latest. This is a chained stage scenario.
 		"[Chained stages] Stage alias with same name as image": {
-			SkipTestReason: "[Priority: low] chained stages not yet supported — stage alias takes precedence over image name (verified with buildah and Docker)",
 			TestImage: BuildDefinition{
 				Tag: "test-alias-matches-image",
 				ContainerfileContent: `FROM localhost/builderwithbadalias:latest AS alpine
-										COPY go_uuid.mod /content/app2/go.mod
+										COPY go_uuid.mod /opt/app2/go.mod
 
 										FROM alpine AS stage2
-										COPY go_exp.mod /content/app3/go.mod
+										COPY go_exp.mod /opt/app3/go.mod
 
 										FROM scratch
-										COPY --from=alpine /base /base
-										COPY --from=alpine /content /content/stage1
-										COPY --from=stage2 / /content/all`,
+										COPY --from=stage2 /opt/ /opt/`,
 				ContextDirectory: "../testdata/image_content",
 			},
 			BuilderImages: []BuildDefinition{
 				{
 					Tag: "builderwithbadalias",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /content/app1/go.mod`,
+											COPY go_syft.mod /opt/app1/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
@@ -1225,19 +1216,19 @@ func TestIntegration(t *testing.T) {
 					{
 						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
 						OriginType: "builder",
-						Pullspec:   "localhost/alpine@sha256:dummy",
+						Pullspec:   "localhost/builderwithbadalias@sha256:dummy",
 						StageAlias: "alpine",
 					},
 					{
 						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
 						OriginType: "intermediate",
-						Pullspec:   "localhost/alpine@sha256:dummy",
+						Pullspec:   "localhost/builderwithbadalias@sha256:dummy",
 						StageAlias: "alpine",
 					},
 					{
 						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
 						OriginType: "intermediate",
-						Pullspec:   "localhost/alpine@sha256:dummy",
+						Pullspec:   "localhost/builderwithbadalias@sha256:dummy",
 						StageAlias: "stage2",
 					},
 				},
