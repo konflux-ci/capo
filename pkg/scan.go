@@ -77,7 +77,7 @@ type PackageMetadataItem struct {
 	// found multiple times as a dependency of different packages.
 	DependencyOfPURL string `json:"dependency_of_purl,omitempty"`
 
-	// Type of origin of this package, can be "builder" or "intermediate".
+	// Type of origin of this package, can be "builder", "intermediate" or "external".
 	OriginType string `json:"origin_type"`
 
 	// Pullspec of the image with digest which is this package's origin.
@@ -209,7 +209,7 @@ func (s *Scanner) Scan(
 	}
 
 	for _, ext := range externals {
-		extPkgItems, err := s.scanSource(ext.pullspec, "", ext.digestBase, ext.sources)
+		extPkgItems, err := s.scanExternalSource(ext)
 		if err != nil {
 			return PackageMetadata{}, fmt.Errorf("failed to scan external source %+v: %w", ext, err)
 		}
@@ -335,7 +335,7 @@ func getPackageSources(
 			// Multiple copies from same external image (multiple COPY instructions referencing same image,
 			// not sources) are grouped under same pullspec.
 			if idx, isBuilder := aliasToIndex[cp.From]; isBuilder {
-				traceSource(source, idx, builderStageAcc, indexToStage, aliasToIndex, baseToWorkdir)
+				traceSource(source, idx, builderStageAcc, indexToStage, aliasToIndex, externalAcc, baseToWorkdir)
 			} else {
 				externalAcc[cp.From] = append(externalAcc[cp.From], source)
 			}
@@ -440,6 +440,7 @@ func buildSourceTree(
 
 // traceSource recursively traces a source path through builder stage COPY
 // commands to find its true origin. Maps stage indices to source paths in acc.
+// External COPY --from references in builder stages are collected in externalAcc.
 // baseToWorkdir is a mapping of bases of stages in the containerfile and their
 // respective initial working directories.
 func traceSource(
@@ -448,6 +449,7 @@ func traceSource(
 	acc map[int][]string,
 	indexToStage map[int]*containerfile.Stage,
 	aliasToIndex map[string]int,
+	externalAcc map[string][]string,
 	baseToWorkdir map[string]string,
 ) {
 	currStage := indexToStage[stageIndex]
@@ -477,7 +479,13 @@ func traceSource(
 				coversMultipleFiles = true
 			}
 			for _, s := range cp.Sources {
-				traceSource(s, aliasToIndex[cp.From], acc, indexToStage, aliasToIndex, baseToWorkdir)
+				if nextIdx, ok := aliasToIndex[cp.From]; ok {
+					// builder stage - continue tracing
+					traceSource(s, nextIdx, acc, indexToStage, aliasToIndex, externalAcc, baseToWorkdir)
+				} else {
+					// external image - add as external source
+					externalAcc[cp.From] = append(externalAcc[cp.From], s)
+				}
 			}
 		}
 	}
@@ -492,7 +500,7 @@ func traceSource(
 
 	// chained stage — propagate source to parent for builder content scanning
 	if parentIdx, ok := aliasToIndex[currStage.BaseRef]; ok {
-		traceSource(source, parentIdx, acc, indexToStage, aliasToIndex, baseToWorkdir)
+		traceSource(source, parentIdx, acc, indexToStage, aliasToIndex, externalAcc, baseToWorkdir)
 	}
 }
 
@@ -636,6 +644,42 @@ func (s *Scanner) scanDescendants(
 	return res, nil
 }
 
+// scanExternalSource scans content from an external image (COPY --from=image:tag).
+// External images have no intermediate layer - only the image content is extracted
+// and reported with origin_type "external".
+func (s *Scanner) scanExternalSource(
+	ext ExternalPackageSource,
+) (_ []PackageMetadataItem, err error) {
+	contentPath, err := os.MkdirTemp("", "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp directory: %w: %w", err, ErrIO)
+	}
+
+	debugMode := os.Getenv("CAPO_DEBUG") != ""
+	if debugMode {
+		s.logger.Debug("external content path", "pullspec", ext.pullspec, "path", contentPath)
+	} else {
+		defer func() {
+			removeErr := os.RemoveAll(contentPath)
+			if err == nil {
+				err = removeErr
+			}
+		}()
+	}
+
+	err = s.getExternalContent(ext.pullspec, ext.sources, contentPath)
+	if err != nil {
+		return nil, err
+	}
+
+	pkgs, err := sbom.SyftScan(contentPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan external content: %w: %w", err, ErrSBOMScan)
+	}
+
+	return getPackageMetadata("", ext.digestBase, "external", pkgs, nil), nil
+}
+
 // scanSource extracts content for a stage from buildah storage, scans it
 // with syft, and returns package metadata items.
 func (s *Scanner) scanSource(
@@ -690,7 +734,7 @@ func (s *Scanner) scanSource(
 	}
 
 	return getPackageMetadata(
-		stageAlias, digestBase, builderPkgs, intermediatePkgs,
+		stageAlias, digestBase, "builder", builderPkgs, intermediatePkgs,
 	), nil
 }
 
@@ -699,6 +743,7 @@ func (s *Scanner) scanSource(
 func getPackageMetadata(
 	stageAlias string,
 	digestBase string,
+	builderOriginType string,
 	builderPkgs []sbom.SyftPackage,
 	intermediatePkgs []sbom.SyftPackage,
 ) []PackageMetadataItem {
@@ -711,7 +756,7 @@ func getPackageMetadata(
 			PackageURL:       bpkg.PURL,
 			DependencyOfPURL: bpkg.DependencyOfPURL,
 			Checksums:        bpkg.Checksums,
-			OriginType:       "builder",
+			OriginType:       builderOriginType,
 		})
 	}
 
