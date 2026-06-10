@@ -105,7 +105,7 @@ func (s *Scanner) getDescendantContent(
 		return nil, nil, fmt.Errorf("%w: failed to find intermediate image for %q: %w", ErrStorage, stageAlias, err)
 	}
 	if !found {
-		// no intermediate image found for node — pass diffBase through unchanged
+		// no intermediate image found for node - pass diffBase through unchanged
 		s.logger.Debug("no intermediate image found for chained stage, skipping", "stage", stageAlias)
 		return diffBase, nil, nil
 	}
