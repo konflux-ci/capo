@@ -279,7 +279,6 @@ func parseMount(mountOpts string, env []string, stageNames []string) (*Mount, er
 	var from, buildahMountType string
 	for opt := range strings.SplitSeq(mountOpts, ",") {
 		if from == "" {
-
 			if val, ok := strings.CutPrefix(opt, "from="); ok {
 				var err error
 				from, err = imagebuilder.ProcessWord(val, env)
@@ -297,6 +296,9 @@ func parseMount(mountOpts string, env []string, stageNames []string) (*Mount, er
 		}
 	}
 
+	// Only bind mounts with a "from" reference are relevant
+	// to contextualization. Without a "from" reference, this
+	// would mount the context directory and not any image.
 	if from == "" || buildahMountType != "bind" {
 		return nil, nil
 	}
