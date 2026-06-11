@@ -1985,6 +1985,15 @@ func TestIntegrationScanErrors(t *testing.T) {
 									COPY --from=builder /opt /opt`,
 			ExpectedError: ErrUnsupportedFeature,
 		},
+		"[RUN --mount] --mount from external image in final stage": {
+			ContainerfileContent: `FROM localhost/mount-ext-base:latest AS builder
+									COPY go_exp.mod /opt/app3/go.mod
+
+									FROM scratch
+									COPY --from=builder /opt /opt
+									RUN --mount=type=bind,from=localhost/mount-ext-source:latest,target=/mnt mkdir -p /opt/app2 && cp /mnt/go.mod /opt/app2/go.mod`,
+			ExpectedError: ErrUnsupportedFeature,
+		},
 	}
 
 	scanner, err := NewScanner()

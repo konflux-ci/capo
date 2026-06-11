@@ -71,9 +71,9 @@ var ErrUnsupportedFeature = errors.New("[ERR_UNSUPPORTED] unsupported feature")
 // Scanner exposes methods used for scanning of buildah image builds, assigning
 // image origins to SBOM packages present in a built image.
 type Scanner struct {
-	logger *slog.Logger
+	logger  *slog.Logger
 	sclient storageclient.Client
-	store storage.Store
+	store   storage.Store
 }
 
 // Enable Scanner to use the functional options pattern for configuration
@@ -81,7 +81,7 @@ type Option func(*Scanner)
 
 // Configure the Scanner to use the passed *slog.Logger for its logging.
 func WithLogger(l *slog.Logger) Option {
-	return func (s *Scanner) {
+	return func(s *Scanner) {
 		s.logger = l
 	}
 }
@@ -158,7 +158,6 @@ func (s *Scanner) Scan(
 		Packages: make([]PackageMetadataItem, 0),
 	}
 	s.logger.Debug("parsed containerfile stages", "stages", stages)
-
 
 	digests, err := getImageDigests(s.sclient, stages)
 	if err != nil {
