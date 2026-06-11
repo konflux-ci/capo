@@ -651,6 +651,27 @@ func TestParse(t *testing.T) {
 				},
 			},
 		},
+		"run with mount is parsed correctly": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							FROM scratch
+							RUN --mount=type=bind,from=builder,src=/app,dst=/app ls /app
+							RUN --mount=type=cache,from=quay.io/builder,src=/cache,dst=/cache ls /cache`,
+			expected: []Stage{
+				{Alias: "builder", Base: "quay.io/rhel:9", Copies: []Copy{}, Mounts: []Mount{}},
+				{Alias: FinalStage, Base: "scratch", Copies: []Copy{}, Mounts: []Mount{
+					{
+						From:             "builder",
+						Type:             MountTypeBuilder,
+						BuildahMountType: BuildahMountTypeBind,
+					},
+					{
+						From:             "quay.io/builder",
+						Type:             MountTypeExternal,
+						BuildahMountType: BuildahMountTypeCache,
+					},
+				}},
+			},
+		},
 	}
 
 	for name, test := range tests {
