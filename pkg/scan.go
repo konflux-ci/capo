@@ -66,7 +66,7 @@ var ErrStorageSetup = errors.New("[ERR_STORAGE_SETUP] failed to set up container
 var ErrPullspecResolve = errors.New("[ERR_PULLSPEC_RESOLVE] failed to resolve pullspec")
 var ErrOCIConfig = errors.New("[ERR_OCI_CONFIG] failed to get OCI image config")
 var ErrSBOMScan = errors.New("[ERR_SBOM_SCAN] SBOM scan failed")
-var ErrUnsupportedFeature = errors.New("[ERR_UNSUPPORTED] unsupported feature")
+var ErrUnsupportedMount = errors.New("[ERR_UNSUPPORTED_MOUNT] unsupported mount type")
 
 // Scanner exposes methods used for scanning of buildah image builds, assigning
 // image origins to SBOM packages present in a built image.
@@ -136,8 +136,13 @@ func setupStore() (storage.Store, error) {
 
 func checkUnsupportedFeatures(stages []containerfile.Stage) error {
 	for _, stage := range stages {
-		if len(stage.Mounts) > 0 {
-			return fmt.Errorf("%w: RUN --mount=type=bind is not supported", ErrUnsupportedFeature)
+		for _, mount := range stage.Mounts {
+			if mount.BuildahMountType == containerfile.BuildahMountTypeBind && mount.From != "" {
+				return fmt.Errorf(
+					"builder content resolution is unsupported for RUN --mount=type=bind: %w",
+					ErrUnsupportedMount,
+				)
+			}
 		}
 	}
 	return nil

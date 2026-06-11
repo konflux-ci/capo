@@ -1983,7 +1983,7 @@ func TestIntegrationScanErrors(t *testing.T) {
 
 									FROM scratch
 									COPY --from=builder /opt /opt`,
-			ExpectedError: ErrUnsupportedFeature,
+			ExpectedError: ErrUnsupportedMount,
 		},
 		"[RUN --mount] --mount from external image in final stage": {
 			ContainerfileContent: `FROM localhost/mount-ext-base:latest AS builder
@@ -1992,7 +1992,7 @@ func TestIntegrationScanErrors(t *testing.T) {
 									FROM scratch
 									COPY --from=builder /opt /opt
 									RUN --mount=type=bind,from=localhost/mount-ext-source:latest,target=/mnt mkdir -p /opt/app2 && cp /mnt/go.mod /opt/app2/go.mod`,
-			ExpectedError: ErrUnsupportedFeature,
+			ExpectedError: ErrUnsupportedMount,
 		},
 	}
 
