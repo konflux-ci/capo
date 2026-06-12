@@ -66,13 +66,14 @@ var ErrStorageSetup = errors.New("[ERR_STORAGE_SETUP] failed to set up container
 var ErrPullspecResolve = errors.New("[ERR_PULLSPEC_RESOLVE] failed to resolve pullspec")
 var ErrOCIConfig = errors.New("[ERR_OCI_CONFIG] failed to get OCI image config")
 var ErrSBOMScan = errors.New("[ERR_SBOM_SCAN] SBOM scan failed")
+var ErrUnsupportedMount = errors.New("[ERR_UNSUPPORTED_MOUNT] unsupported mount type")
 
 // Scanner exposes methods used for scanning of buildah image builds, assigning
 // image origins to SBOM packages present in a built image.
 type Scanner struct {
-	logger *slog.Logger
+	logger  *slog.Logger
 	sclient storageclient.Client
-	store storage.Store
+	store   storage.Store
 }
 
 // Enable Scanner to use the functional options pattern for configuration
@@ -80,7 +81,7 @@ type Option func(*Scanner)
 
 // Configure the Scanner to use the passed *slog.Logger for its logging.
 func WithLogger(l *slog.Logger) Option {
-	return func (s *Scanner) {
+	return func(s *Scanner) {
 		s.logger = l
 	}
 }
@@ -133,6 +134,20 @@ func setupStore() (storage.Store, error) {
 	return store, nil
 }
 
+func checkUnsupportedFeatures(stages []containerfile.Stage) error {
+	for _, stage := range stages {
+		for _, mount := range stage.Mounts {
+			if mount.BuildahMountType == containerfile.BuildahMountTypeBind && mount.From != "" {
+				return fmt.Errorf(
+					"builder content resolution is unsupported for RUN --mount=type=bind: %w",
+					ErrUnsupportedMount,
+				)
+			}
+		}
+	}
+	return nil
+}
+
 // Scan reads the passed containerfile stages, resolves true content origin,
 // extracts relevant content from buildah storage and scans it using syft.
 // Returns a PackageMetadata struct containing packages and their origin information
@@ -140,6 +155,10 @@ func setupStore() (storage.Store, error) {
 func (s *Scanner) Scan(
 	stages []containerfile.Stage,
 ) (PackageMetadata, error) {
+	if err := checkUnsupportedFeatures(stages); err != nil {
+		return PackageMetadata{}, err
+	}
+
 	res := PackageMetadata{
 		Packages: make([]PackageMetadataItem, 0),
 	}

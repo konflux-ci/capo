@@ -61,6 +61,9 @@ type Mount struct {
 	// Type of the mount. Specifies whether it references a builder stage
 	// or an external image directly.
 	Type MountType
+	// Type of the mount as specified in the RUN --mount instruction.
+	// There are only two valid types: bind and cache.
+	BuildahMountType BuildahMountType
 }
 
 // MountType classifies a RUN --mount reference by its source origin.
@@ -71,6 +74,17 @@ const (
 	MountTypeBuilder MountType = iota
 	// MountTypeExternal indicates a mount directly from an external image.
 	MountTypeExternal
+)
+
+// BuildahMountType classifies a RUN --mount instruction by its type.
+type BuildahMountType int
+
+const (
+	BuildahMountTypeBind BuildahMountType = iota
+	BuildahMountTypeCache
+	BuildahMountTypeTmpfs
+	BuildahMountTypeSecret
+	BuildahMountTypeSSH
 )
 
 // A builder or final stage in a Containerfile
@@ -262,35 +276,66 @@ func parseMounts(node *parser.Node, env []string, stageNames []string) ([]Mount,
 		if !strings.HasPrefix(fl, "--mount=") {
 			continue
 		}
+		mount, err := parseMount(strings.TrimPrefix(fl, "--mount="), env, stageNames)
+		if err != nil {
+			return nil, err
+		}
+		if mount != nil {
+			mounts = append(mounts, *mount)
+		}
+	}
+	return mounts, nil
+}
 
-		mountOpts := strings.TrimPrefix(fl, "--mount=")
-		from := ""
-		for opt := range strings.SplitSeq(mountOpts, ",") {
+// parseMount parses a single --mount option string (without the --mount= prefix)
+// and returns a Mount if it is a bind mount with a from reference, or nil otherwise.
+func parseMount(mountOpts string, env []string, stageNames []string) (*Mount, error) {
+	var from, buildahMountTypeStr string
+	for opt := range strings.SplitSeq(mountOpts, ",") {
+		if from == "" {
 			if val, ok := strings.CutPrefix(opt, "from="); ok {
 				var err error
 				from, err = imagebuilder.ProcessWord(val, env)
 				if err != nil {
 					return nil, fmt.Errorf("%w: %w", ErrParse, err)
 				}
-				break
+				continue
 			}
 		}
-
-		if from == "" {
-			continue
+		if buildahMountTypeStr == "" {
+			if val, ok := strings.CutPrefix(opt, "type="); ok {
+				buildahMountTypeStr = val
+				continue
+			}
 		}
-
-		mountType := MountTypeBuilder
-		if !isStageRef(from, stageNames) {
-			mountType = MountTypeExternal
-		}
-
-		mounts = append(mounts, Mount{
-			From: from,
-			Type: mountType,
-		})
 	}
-	return mounts, nil
+
+	mountType := MountTypeExternal
+	if isStageRef(from, stageNames) {
+		mountType = MountTypeBuilder
+	}
+
+	var buildahMountType BuildahMountType
+	switch buildahMountTypeStr {
+	case "bind", "": // "bind" is the default in Buildah.
+		buildahMountType = BuildahMountTypeBind
+	case "cache":
+		buildahMountType = BuildahMountTypeCache
+	case "tmpfs":
+		buildahMountType = BuildahMountTypeTmpfs
+	case "secret":
+		buildahMountType = BuildahMountTypeSecret
+	case "ssh":
+		buildahMountType = BuildahMountTypeSSH
+	default:
+		return nil, fmt.Errorf("%w: invalid buildah mount type: %s", ErrParse, buildahMountTypeStr)
+	}
+
+	return &Mount{
+		From:             from,
+		Type:             mountType,
+		BuildahMountType: buildahMountType,
+	}, nil
 }
 
 // normalizeSources normalizes the paths in the passed sources slice to absolute clean paths.
