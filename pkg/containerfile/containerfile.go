@@ -317,7 +317,7 @@ func parseMount(mountOpts string, env []string, stageNames []string) (*Mount, er
 
 	var buildahMountType BuildahMountType
 	switch buildahMountTypeStr {
-	case "bind":
+	case "bind", "": // "bind" is the default in Buildah.
 		buildahMountType = BuildahMountTypeBind
 	case "cache":
 		buildahMountType = BuildahMountTypeCache
