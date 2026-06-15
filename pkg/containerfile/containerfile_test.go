@@ -116,20 +116,26 @@ func TestParse(t *testing.T) {
 							FROM scratch`,
 			expected: []Stage{
 				{
-					Alias:  "builder0",
-					Base:   "docker.io/library/fedora",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder0",
+					Base:    "docker.io/library/fedora",
+					BaseRef: "docker.io/library/fedora",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias:  "builder1",
-					Base:   "docker.io/library/alpine:latest",
-					Copies: []Copy{},
-					Mounts: []Mount{},
+					Alias:   "builder1",
+					Base:    "docker.io/library/alpine:latest",
+					BaseRef: "docker.io/library/alpine:latest",
+					Index:   1,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
 				},
 				{
-					Alias: "somethingelse",
-					Base:  "builder1",
+					Alias:   "somethingelse",
+					Base:    "docker.io/library/alpine:latest",
+					BaseRef: "builder1",
+					Index:   2,
 					Copies: []Copy{
 						{
 							From:        "builder0",
@@ -145,7 +151,7 @@ func TestParse(t *testing.T) {
 						},
 					},
 				},
-				{Base: "scratch", Alias: FinalStage, Copies: []Copy{}, Mounts: []Mount{}},
+				{Alias: FinalStage, Base: "scratch", BaseRef: "scratch", Index: -1, Copies: []Copy{}, Mounts: []Mount{}},
 			},
 		},
 		"build target": {
@@ -764,14 +770,57 @@ func TestParse(t *testing.T) {
 				},
 			},
 		},
+		"chained stages resolve base through chain": {
+			containerfile: `FROM docker.io/library/fedora:latest AS parent
+							FROM parent AS child
+							FROM child AS grandchild
+							FROM scratch
+							COPY --from=grandchild /app /app`,
+			expected: []Stage{
+				{
+					Alias:   "parent",
+					Base:    "docker.io/library/fedora:latest",
+					BaseRef: "docker.io/library/fedora:latest",
+					Index:   0,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
+				},
+				{
+					Alias:   "child",
+					Base:    "docker.io/library/fedora:latest",
+					BaseRef: "parent",
+					Index:   1,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
+				},
+				{
+					Alias:   "grandchild",
+					Base:    "docker.io/library/fedora:latest",
+					BaseRef: "child",
+					Index:   2,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
+				},
+				{
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
+					Copies: []Copy{
+						{From: "grandchild", Sources: []string{"/app"}, Destination: "/app", Type: CopyTypeBuilder},
+					},
+					Mounts: []Mount{},
+				},
+			},
+		},
 		"run with mount is parsed correctly": {
 			containerfile: `FROM quay.io/rhel:9 AS builder
 							FROM scratch
 							RUN --mount=type=bind,from=builder,src=/app,dst=/app ls /app
 							RUN --mount=type=cache,from=quay.io/builder,src=/cache,dst=/cache ls /cache`,
 			expected: []Stage{
-				{Alias: "builder", Base: "quay.io/rhel:9", Copies: []Copy{}, Mounts: []Mount{}},
-				{Alias: FinalStage, Base: "scratch", Copies: []Copy{}, Mounts: []Mount{
+				{Alias: "builder", Base: "quay.io/rhel:9", BaseRef: "quay.io/rhel:9", Index: 0, Copies: []Copy{}, Mounts: []Mount{}},
+				{Alias: FinalStage, Base: "scratch", BaseRef: "scratch", Index: -1, Copies: []Copy{}, Mounts: []Mount{
 					{
 						FromRaw:   "builder",
 						MountType: MountTypeBind,
