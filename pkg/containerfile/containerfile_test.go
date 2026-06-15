@@ -132,9 +132,8 @@ func TestParse(t *testing.T) {
 					},
 					Mounts: []Mount{
 						{
-							From:       "builder1",
-							OriginType: MountOriginBuilder,
-							MountType:  MountTypeBind,
+							FromRaw:   "builder1",
+							MountType: MountTypeBind,
 						},
 					},
 				},
@@ -538,7 +537,7 @@ func TestParse(t *testing.T) {
 					Base:   "quay.io/rhel:9",
 					Copies: []Copy{},
 					Mounts: []Mount{
-						{From: "quay.io/tools:1", OriginType: MountOriginExternal},
+						{FromRaw: "quay.io/tools:1", Pullspec: "quay.io/tools:1"},
 					},
 				},
 			},
@@ -559,7 +558,7 @@ func TestParse(t *testing.T) {
 					Base:   "scratch",
 					Copies: []Copy{},
 					Mounts: []Mount{
-						{From: "builder", OriginType: MountOriginBuilder},
+						{FromRaw: "builder"},
 					},
 				},
 			},
@@ -580,7 +579,7 @@ func TestParse(t *testing.T) {
 					Base:   "scratch",
 					Copies: []Copy{},
 					Mounts: []Mount{
-						{From: "0", OriginType: MountOriginBuilder},
+						{FromRaw: "0"},
 					},
 				},
 			},
@@ -702,14 +701,13 @@ func TestParse(t *testing.T) {
 				{Alias: "builder", Base: "quay.io/rhel:9", Copies: []Copy{}, Mounts: []Mount{}},
 				{Alias: FinalStage, Base: "scratch", Copies: []Copy{}, Mounts: []Mount{
 					{
-						From:       "builder",
-						OriginType: MountOriginBuilder,
-						MountType:  MountTypeBind,
+						FromRaw:   "builder",
+						MountType: MountTypeBind,
 					},
 					{
-						From:       "quay.io/builder",
-						OriginType: MountOriginExternal,
-						MountType:  MountTypeCache,
+						FromRaw:   "quay.io/builder",
+						Pullspec:  "quay.io/builder",
+						MountType: MountTypeCache,
 					},
 				}},
 			},
