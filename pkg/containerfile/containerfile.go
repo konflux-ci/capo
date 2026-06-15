@@ -149,14 +149,14 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 	// maps stage alias to root base pullspec (resolved through chain)
 	aliasToBase := make(map[string]string)
 
-	for i, s := range rawStages {
+	for index, s := range rawStages {
 		stageNames = append(stageNames, s.Name)
 
-		isFinal := i == len(rawStages)-1
-		index := i
+		isFinal := index == len(rawStages)-1
+		stageIndex := index
 		if isFinal {
 			s.Name = FinalStage
-			index = -1
+			stageIndex = -1
 		}
 
 		copies, mounts, err := parseStageRefs(s, stageNames)
@@ -164,7 +164,7 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 			return res, err
 		}
 
-		baseRef := pullspecs[i]
+		baseRef := pullspecs[index]
 		base := baseRef
 		// resolve chained stages: if baseRef is an alias of a previous stage,
 		// use its already-resolved root base pullspec
@@ -177,7 +177,7 @@ func Parse(reader io.Reader, opts BuildOptions) ([]Stage, error) {
 			Alias:   s.Name,
 			Base:    base,
 			BaseRef: baseRef,
-			Index:   index,
+			Index:   stageIndex,
 			Copies:  copies,
 			Mounts:  mounts,
 		})

@@ -29,12 +29,10 @@ var ErrStorage = errors.New("[ERR_STORAGE] container storage error")
 var ErrUnsupportedBuildahVersion = errors.New("[ERR_UNSUPPORTED_BUILDAH_VERSION] unsupported buildah version")
 var ErrMissingStageLabel = errors.New("[ERR_MISSING_STAGE_LABEL] intermediate image is missing stage label")
 
-// getContent uses the container store to extract partial content from the build
-// for the specified package source. Extracts both builder base content and
-// intermediate content (created during the build) for later syft scanning.
-//
-// Uses buildah stage labels (io.buildah.stage.name) to identify intermediate
-// image for each stage.
+// getContent extracts builder base content and intermediate content for the
+// specified stage from buildah storage for later syft scanning.
+// Uses buildah stage labels (io.buildah.stage.name) to identify the
+// intermediate image for the given stage alias.
 func (s *Scanner) getContent(
 	pullspec string,
 	stageAlias string,
@@ -108,6 +106,7 @@ func (s *Scanner) getDescendantContent(
 	}
 	if !found {
 		// no intermediate image found for node — pass diffBase through unchanged
+		s.logger.Debug("no intermediate image found for chained stage, skipping", "stage", stageAlias)
 		return diffBase, nil, nil
 	}
 
