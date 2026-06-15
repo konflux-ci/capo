@@ -55,25 +55,15 @@ type Copy struct {
 
 // A mount reference from a RUN --mount instruction in a Containerfile stage.
 type Mount struct {
-	// Alias of the stage the mount references when Mount.Origin==MountOriginBuilder
-	// or a pullspec when Mount.Origin==MountOriginExternal
-	From string
-	// OriginType of the mount. Specifies whether it references a builder stage
-	// or an external image directly.
-	OriginType MountOriginType
+	// Value of the --from field in the RUN command for bind and cache mount types.
+	FromRaw string
+	// Pullspec of an image used in the --from field, if the value is a reference
+	// to an image, empty otherwise. Note that the pullspec may be incomplete,
+	// it is directly copied from the FROM instruction in the stage where relevant.
+	Pullspec string
 	// Type of the mount as specified in the RUN --mount instruction.
 	MountType MountType
 }
-
-// MountOriginType classifies a RUN --mount reference by its source origin.
-type MountOriginType int
-
-const (
-	// MountOriginBuilder indicates a mount from a previous builder stage.
-	MountOriginBuilder MountOriginType = iota
-	// MountOriginExternal indicates a mount directly from an external image.
-	MountOriginExternal
-)
 
 // MountType classifies a RUN --mount instruction by its type.
 type MountType int
@@ -290,7 +280,7 @@ func parseMounts(node *parser.Node, env []string, stageNames []string) ([]Mount,
 // parseMount parses a single --mount option string (without the --mount= prefix)
 // and returns a Mount if it is a bind mount with a from reference, or nil otherwise.
 func parseMount(mountOpts string, env []string, stageNames []string) (*Mount, error) {
-	var from, buildahMountTypeStr string
+	var from, buildahMountTypeStr, pullspec string
 	for opt := range strings.SplitSeq(mountOpts, ",") {
 		if from == "" {
 			if val, ok := strings.CutPrefix(opt, "from="); ok {
@@ -310,9 +300,9 @@ func parseMount(mountOpts string, env []string, stageNames []string) (*Mount, er
 		}
 	}
 
-	originType := MountOriginExternal
-	if isStageRef(from, stageNames) {
-		originType = MountOriginBuilder
+	if !isStageRef(from, stageNames) {
+		// populate pullspec only if it is not a stage reference
+		pullspec = from
 	}
 
 	var mountType MountType
@@ -332,9 +322,9 @@ func parseMount(mountOpts string, env []string, stageNames []string) (*Mount, er
 	}
 
 	return &Mount{
-		From:       from,
-		OriginType: originType,
-		MountType:  mountType,
+		FromRaw:   from,
+		Pullspec:  pullspec,
+		MountType: mountType,
 	}, nil
 }
 

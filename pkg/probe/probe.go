@@ -167,8 +167,8 @@ func stageRefs(stage containerfile.Stage) []string {
 		}
 	}
 	for _, mount := range stage.Mounts {
-		if mount.OriginType == containerfile.MountOriginBuilder {
-			refs = append(refs, mount.From)
+		if mount.Pullspec == "" {
+			refs = append(refs, mount.FromRaw)
 		}
 	}
 	return refs
@@ -244,10 +244,10 @@ func resolveExtraImages(client storageclient.Client, stages []containerfile.Stag
 		}
 
 		for _, mount := range stage.Mounts {
-			if mount.OriginType != containerfile.MountOriginExternal {
+			if mount.Pullspec == "" {
 				continue
 			}
-			if err := addImage(mount.From); err != nil {
+			if err := addImage(mount.Pullspec); err != nil {
 				return nil, err
 			}
 		}
