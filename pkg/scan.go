@@ -228,10 +228,9 @@ func getImageDigests(
 	res := make(map[string]digest.Digest)
 
 	for _, stage := range stages[:len(stages)-1] {
-		// chained stages share the same base as their root - already resolved
-		if stage.Base != stage.BaseRef {
-			continue
-		}
+		// This deduplication check covers both duplicate pullspecs across
+		// the containerfile and implicitly skips chained stages (their root
+		// stage already resolved the shared base pullspec).
 		if _, ok := res[stage.Base]; !ok {
 			if storageclient.IsSpecialBase(stage.Base) {
 				continue
