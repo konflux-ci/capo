@@ -55,36 +55,36 @@ type Copy struct {
 
 // A mount reference from a RUN --mount instruction in a Containerfile stage.
 type Mount struct {
-	// Alias of the stage the mount references when Mount.Type==MountTypeBuilder
-	// or a pullspec when Mount.Type==MountTypeExternal
+	// Alias of the stage the mount references when Mount.Origin==MountOriginBuilder
+	// or a pullspec when Mount.Origin==MountOriginExternal
 	From string
-	// Type of the mount. Specifies whether it references a builder stage
+	// OriginType of the mount. Specifies whether it references a builder stage
 	// or an external image directly.
-	Type MountType
+	OriginType MountOriginType
 	// Type of the mount as specified in the RUN --mount instruction.
-	// There are only two valid types: bind and cache.
-	BuildahMountType BuildahMountType
+	MountType MountType
 }
 
-// MountType classifies a RUN --mount reference by its source origin.
-type MountType int
+// MountOriginType classifies a RUN --mount reference by its source origin.
+type MountOriginType int
 
 const (
-	// MountTypeBuilder indicates a mount from a previous builder stage.
-	MountTypeBuilder MountType = iota
-	// MountTypeExternal indicates a mount directly from an external image.
-	MountTypeExternal
+	// MountOriginBuilder indicates a mount from a previous builder stage.
+	MountOriginBuilder MountOriginType = iota
+	// MountOriginExternal indicates a mount directly from an external image.
+	MountOriginExternal
 )
 
-// BuildahMountType classifies a RUN --mount instruction by its type.
-type BuildahMountType int
+// MountType classifies a RUN --mount instruction by its type.
+type MountType int
 
+// See values https://docs.docker.com/reference/dockerfile/#run---mount
 const (
-	BuildahMountTypeBind BuildahMountType = iota
-	BuildahMountTypeCache
-	BuildahMountTypeTmpfs
-	BuildahMountTypeSecret
-	BuildahMountTypeSSH
+	MountTypeBind MountType = iota
+	MountTypeCache
+	MountTypeTmpfs
+	MountTypeSecret
+	MountTypeSSH
 )
 
 // A builder or final stage in a Containerfile
@@ -310,31 +310,31 @@ func parseMount(mountOpts string, env []string, stageNames []string) (*Mount, er
 		}
 	}
 
-	mountType := MountTypeExternal
+	originType := MountOriginExternal
 	if isStageRef(from, stageNames) {
-		mountType = MountTypeBuilder
+		originType = MountOriginBuilder
 	}
 
-	var buildahMountType BuildahMountType
+	var mountType MountType
 	switch buildahMountTypeStr {
 	case "bind", "": // "bind" is the default in Buildah.
-		buildahMountType = BuildahMountTypeBind
+		mountType = MountTypeBind
 	case "cache":
-		buildahMountType = BuildahMountTypeCache
+		mountType = MountTypeCache
 	case "tmpfs":
-		buildahMountType = BuildahMountTypeTmpfs
+		mountType = MountTypeTmpfs
 	case "secret":
-		buildahMountType = BuildahMountTypeSecret
+		mountType = MountTypeSecret
 	case "ssh":
-		buildahMountType = BuildahMountTypeSSH
+		mountType = MountTypeSSH
 	default:
 		return nil, fmt.Errorf("%w: invalid buildah mount type: %s", ErrParse, buildahMountTypeStr)
 	}
 
 	return &Mount{
-		From:             from,
-		Type:             mountType,
-		BuildahMountType: buildahMountType,
+		From:       from,
+		OriginType: originType,
+		MountType:  mountType,
 	}, nil
 }
 

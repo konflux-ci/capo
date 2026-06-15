@@ -137,7 +137,7 @@ func setupStore() (storage.Store, error) {
 func checkUnsupportedFeatures(stages []containerfile.Stage) error {
 	for _, stage := range stages {
 		for _, mount := range stage.Mounts {
-			if mount.BuildahMountType == containerfile.BuildahMountTypeBind && mount.From != "" {
+			if mount.MountType == containerfile.MountTypeBind && mount.From != "" {
 				return fmt.Errorf(
 					"builder content resolution is unsupported for RUN --mount=type=bind: %w",
 					ErrUnsupportedMount,
