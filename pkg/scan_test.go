@@ -1422,6 +1422,20 @@ func TestResolveRelativeDestination(t *testing.T) {
 	}
 }
 
+func TestDuplicateAliasIsRejected(t *testing.T) {
+	t.Parallel()
+	stages := []containerfile.Stage{
+		{Alias: "builder", Base: "quay.io/rhel:9", BaseRef: "quay.io/rhel:9", Index: 0},
+		{Alias: "builder", Base: "quay.io/fedora:42", BaseRef: "quay.io/fedora:42", Index: 1},
+		{Alias: containerfile.FinalStage, Base: "scratch", BaseRef: "scratch", Index: -1},
+	}
+
+	err := checkUnsupportedFeatures(stages)
+	if !errors.Is(err, ErrDuplicateAlias) {
+		t.Fatalf("expected ErrDuplicateAlias, got: %v", err)
+	}
+}
+
 func TestGetPackageSourcesError(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {

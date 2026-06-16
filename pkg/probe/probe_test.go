@@ -271,8 +271,9 @@ func TestProbe(t *testing.T) {
 				ExtraImages: []Image{},
 			},
 		},
-		// The following test exists to match inconsistent behaviour in buildah:
-		// https://github.com/containers/buildah/issues/6731
+		// buildprobe accepts duplicate aliases to match konflux-build-cli, where
+		// findMatchingStages returns all stages with the same name (no error):
+		// https://github.com/konflux-ci/konflux-build-cli/blob/main/pkg/commands/build.go#L2298
 		"duplicate stage names reports both base images": {
 			containerfile: `FROM quay.io/rhel:9 AS builder
 							COPY . .
