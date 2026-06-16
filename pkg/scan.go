@@ -94,6 +94,12 @@ var ErrOCIConfig = errors.New("[ERR_OCI_CONFIG] failed to get OCI image config")
 var ErrSBOMScan = errors.New("[ERR_SBOM_SCAN] SBOM scan failed")
 var ErrUnsupportedMount = errors.New("[ERR_UNSUPPORTED_MOUNT] unsupported mount type")
 
+// ErrDuplicateAlias is returned when two stages in a Containerfile share
+// the same alias. Buildah behavior for duplicate aliases is undefined
+// (see https://github.com/containers/buildah/issues/6731), so capo skips
+// builder content identification to avoid producing incorrect results.
+var ErrDuplicateAlias = errors.New("[ERR_DUPLICATE_ALIAS] duplicate stage alias")
+
 // Scanner exposes methods used for scanning of buildah image builds, assigning
 // image origins to SBOM packages present in a built image.
 type Scanner struct {
@@ -161,7 +167,16 @@ func setupStore() (storage.Store, error) {
 }
 
 func checkUnsupportedFeatures(stages []containerfile.Stage) error {
+	seenAliases := make(map[string]bool)
 	for _, stage := range stages {
+		if stage.Alias != containerfile.FinalStage && seenAliases[stage.Alias] {
+			return fmt.Errorf(
+				"stage alias %q is used more than once: %w",
+				stage.Alias, ErrDuplicateAlias,
+			)
+		}
+		seenAliases[stage.Alias] = true
+
 		for _, mount := range stage.Mounts {
 			if mount.MountType == containerfile.MountTypeBind && mount.FromRaw != "" {
 				return fmt.Errorf(
