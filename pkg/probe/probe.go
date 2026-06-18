@@ -160,7 +160,7 @@ func reachableStages(stages []containerfile.Stage) []containerfile.Stage {
 // stageRefs returns all references to other stages from a given stage:
 // the FROM base image and all builder-type COPY --from and RUN --mount refs.
 func stageRefs(stage containerfile.Stage) []string {
-	refs := []string{stage.Base}
+	refs := []string{stage.BaseRef}
 	for _, cp := range stage.Copies {
 		if cp.Type == containerfile.CopyTypeBuilder {
 			refs = append(refs, cp.From)
