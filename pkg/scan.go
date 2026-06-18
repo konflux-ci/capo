@@ -169,7 +169,7 @@ func setupStore() (storage.Store, error) {
 func checkUnsupportedFeatures(stages []containerfile.Stage) error {
 	seenAliases := make(map[string]bool)
 	for _, stage := range stages {
-		if stage.Alias != containerfile.FinalStage && seenAliases[stage.Alias] {
+		if stage.Index != -1 && seenAliases[stage.Alias] {
 			return fmt.Errorf(
 				"stage alias %q is used more than once: %w",
 				stage.Alias, ErrDuplicateAlias,
