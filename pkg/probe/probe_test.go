@@ -303,6 +303,37 @@ func TestProbe(t *testing.T) {
 				ExtraImages: []Image{},
 			},
 		},
+		// BFS must follow BaseRef (alias) to traverse chained stages,
+		// otherwise the parent stage is unreachable and its extra images are lost
+		"chained stage parent is reachable through chain": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							COPY --from=quay.io/tools:1 /bin/tool /usr/bin/tool
+							FROM builder AS child
+							FROM scratch
+							COPY --from=child /app /app`,
+			opts: ProbeOpts{
+				Tag:    "quay.io/image:latest",
+				Target: "",
+				Args:   make(map[string]string),
+			},
+			digests: map[string]digest.Digest{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/tools:1":      "toolsdigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImages: []Image{
+					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				},
+				ExtraImages: []Image{
+					{Pullspec: "quay.io/tools:1", Digest: "toolsdigest"},
+				},
+			},
+		},
 		"unreachable stage is excluded when target is set": {
 			containerfile: `FROM quay.io/alpine:3 AS unreachable
 							RUN echo hello
