@@ -273,7 +273,7 @@ func TestProbe(t *testing.T) {
 		},
 		// buildprobe accepts duplicate aliases to match konflux-build-cli, where
 		// findMatchingStages returns all stages with the same name (no error):
-		// https://github.com/konflux-ci/konflux-build-cli/blob/main/pkg/commands/build.go#L2298
+		// https://github.com/konflux-ci/konflux-build-cli/blob/1d6a8e2/pkg/commands/build.go#L2298
 		"duplicate stage names reports both base images": {
 			containerfile: `FROM quay.io/rhel:9 AS builder
 							COPY . .
