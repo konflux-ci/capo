@@ -181,16 +181,11 @@ func Parse(reader io.Reader, opts BuildOptions) (Containerfile, error) {
 	for index, s := range rawStages {
 		stageNames = append(stageNames, s.Name)
 
-		isFinal := index == len(rawStages)-1
+		alias := s.Name
 		stageIndex := index
-		if isFinal {
-			s.Name = FinalStage
+		if index == len(rawStages)-1 {
+			alias = FinalStage
 			stageIndex = -1
-		}
-
-		stage, err := parseStage(s, pullspecs[index], stageNames)
-		if err != nil {
-			return Containerfile{Stages: res}, err
 		}
 
 		baseRef := pullspecs[index]
@@ -200,10 +195,12 @@ func Parse(reader io.Reader, opts BuildOptions) (Containerfile, error) {
 		if resolvedBase, isChained := aliasToBase[baseRef]; isChained {
 			base = resolvedBase
 		}
-		aliasToBase[s.Name] = base
-		stage.BaseRef = baseRef
-		stage.Base = base
-		stage.Index = stageIndex
+		aliasToBase[alias] = base
+
+		stage, err := parseStage(s, alias, base, baseRef, stageIndex, stageNames)
+		if err != nil {
+			return Containerfile{Stages: res}, err
+		}
 
 		res = append(res, stage)
 	}
@@ -242,15 +239,12 @@ func resolvePullspecs(stages []imagebuilder.Stage) ([]string, error) {
 }
 
 // parseStage parses the AST for the passed imagebuilder.Stage and returns a
-// Stage struct with its copies, mounts, and labels populated.
+// Stage.
 //
-// A COPY command is builder-type if the "--from" flag is specified and it copies from
-// a builder stage or directly from an image.
-// A Mount is extracted from RUN --mount instructions that specify a "from" option.
-// Uses the passed previous stageNames to specify whether references are to a stage
-// or directly to an image.
+// Uses the passed previous stageNames to classify whether COPY --from and
+// RUN --mount references point to a stage or directly to an image.
 // WARNING: named contexts in the Containerfile are not supported
-func parseStage(s imagebuilder.Stage, pullspec string, stageNames []string) (Stage, error) {
+func parseStage(s imagebuilder.Stage, alias, base, baseRef string, index int, stageNames []string) (Stage, error) {
 	copies := make([]Copy, 0)
 	mounts := make([]Mount, 0)
 	labels := make(map[string]string)
@@ -261,11 +255,6 @@ func parseStage(s imagebuilder.Stage, pullspec string, stageNames []string) (Sta
 	// user provided args override the heading ARGs,
 	// so they're appended second to take priority
 	env := append(headingEnv, userEnv...)
-
-	stage := Stage{
-		Alias: s.Name,
-		Base:  pullspec,
-	}
 
 	for _, child := range s.Node.Children {
 		switch child.Value {
@@ -280,7 +269,7 @@ func parseStage(s imagebuilder.Stage, pullspec string, stageNames []string) (Sta
 		case "copy":
 			cp, err := parseCopy(child, workdir, env, stageNames)
 			if err != nil {
-				return stage, err
+				return Stage{}, err
 			}
 
 			if cp != nil {
@@ -290,24 +279,28 @@ func parseStage(s imagebuilder.Stage, pullspec string, stageNames []string) (Sta
 		case "run":
 			runMounts, err := parseMounts(child, env, stageNames)
 			if err != nil {
-				return stage, err
+				return Stage{}, err
 			}
 			mounts = append(mounts, runMounts...)
 
 		case "label":
 			parsed, err := parseLabels(child, env)
 			if err != nil {
-				return stage, err
+				return Stage{}, err
 			}
 			maps.Copy(labels, parsed)
 		}
 	}
 
-	stage.Copies = copies
-	stage.Mounts = mounts
-	stage.Labels = labels
-
-	return stage, nil
+	return Stage{
+		Alias:   alias,
+		Base:    base,
+		BaseRef: baseRef,
+		Index:   index,
+		Copies:  copies,
+		Mounts:  mounts,
+		Labels:  labels,
+	}, nil
 }
 
 // isStageRef returns true if ref matches a known stage, either by name or by

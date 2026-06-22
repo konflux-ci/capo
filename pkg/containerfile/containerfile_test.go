@@ -979,10 +979,12 @@ func TestParseBuildArgFromFile(t *testing.T) {
 
 	expected := Containerfile{Stages: []Stage{
 		{
-			Alias:  FinalStage,
-			Base:   "docker.io/library/alpine:3.20",
-			Copies: []Copy{},
-			Mounts: []Mount{},
+			Alias:   FinalStage,
+			Base:    "docker.io/library/alpine:3.20",
+			BaseRef: "docker.io/library/alpine:3.20",
+			Index:   -1,
+			Copies:  []Copy{},
+			Mounts:  []Mount{},
 		},
 	}}
 
@@ -1006,10 +1008,12 @@ func TestParseBuildArgCLIOverridesFile(t *testing.T) {
 
 	expected := Containerfile{Stages: []Stage{
 		{
-			Alias:  FinalStage,
-			Base:   "docker.io/library/alpine:cli-tag",
-			Copies: []Copy{},
-			Mounts: []Mount{},
+			Alias:   FinalStage,
+			Base:    "docker.io/library/alpine:cli-tag",
+			BaseRef: "docker.io/library/alpine:cli-tag",
+			Index:   -1,
+			Copies:  []Copy{},
+			Mounts:  []Mount{},
 		},
 	}}
 
@@ -1035,10 +1039,12 @@ func TestParseBuildArgEnvResolution(t *testing.T) {
 
 	expected := Containerfile{Stages: []Stage{
 		{
-			Alias:  FinalStage,
-			Base:   "docker.io/library/alpine:envtag",
-			Copies: []Copy{},
-			Mounts: []Mount{},
+			Alias:   FinalStage,
+			Base:    "docker.io/library/alpine:envtag",
+			BaseRef: "docker.io/library/alpine:envtag",
+			Index:   -1,
+			Copies:  []Copy{},
+			Mounts:  []Mount{},
 		},
 	}}
 
@@ -1064,11 +1070,13 @@ func TestParseBuildArgFileEmptyValueStaysEmpty(t *testing.T) {
 
 	expected := Containerfile{Stages: []Stage{
 		{
-			Alias:  FinalStage,
-			Base:   "scratch",
-			Copies: []Copy{},
-			Mounts: []Mount{},
-			Labels: map[string]string{"tag": ""},
+			Alias:   FinalStage,
+			Base:    "scratch",
+			BaseRef: "scratch",
+			Index:   -1,
+			Copies:  []Copy{},
+			Mounts:  []Mount{},
+			Labels:  map[string]string{"tag": ""},
 		},
 	}}
 
@@ -1109,10 +1117,12 @@ func TestParseBuildArgMergeWithEnv(t *testing.T) {
 
 	expected := Containerfile{Stages: []Stage{
 		{
-			Alias:  FinalStage,
-			Base:   "scratch",
-			Copies: []Copy{},
-			Mounts: []Mount{},
+			Alias:   FinalStage,
+			Base:    "scratch",
+			BaseRef: "scratch",
+			Index:   -1,
+			Copies:  []Copy{},
+			Mounts:  []Mount{},
 			Labels: map[string]string{
 				"a": "from-file",
 				"b": "from-cli",
