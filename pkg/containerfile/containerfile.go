@@ -458,6 +458,7 @@ func parseCopy(node *parser.Node, workdir string, env []string, stageNames []str
 
 func parseLabels(node *parser.Node, env []string) (map[string]string, error) {
 	labels := make(map[string]string)
+	// iterate over two nodes at the same time - key and value
 	curr := node.Next
 	for curr != nil && curr.Next != nil {
 		key, err := imagebuilder.ProcessWord(curr.Value, env)
