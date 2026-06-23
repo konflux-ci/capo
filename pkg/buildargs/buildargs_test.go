@@ -1,3 +1,4 @@
+//go:build unit
 package buildargs
 
 import (
