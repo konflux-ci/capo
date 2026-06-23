@@ -731,7 +731,7 @@ func TestParse(t *testing.T) {
 		},
 		"multiple labels on one line": {
 			containerfile: `FROM quay.io/rhel:9
-							LABEL version=1.0 vendor="Red Hat"`,
+							LABEL "version"=1.0 vendor="Red Hat"`,
 			expected: Containerfile{Stages: []Stage{
 				{
 					Alias:   FinalStage,
@@ -741,6 +741,22 @@ func TestParse(t *testing.T) {
 					Copies:  []Copy{},
 					Mounts:  []Mount{},
 					Labels:  map[string]string{"version": "1.0", "vendor": "Red Hat"},
+				},
+			}},
+		},
+		"multiline label": {
+			containerfile: `FROM quay.io/rhel:9
+							LABEL description="multi-line \
+label test"`,
+			expected: Containerfile{Stages: []Stage{
+				{
+					Alias:   FinalStage,
+					Base:    "quay.io/rhel:9",
+					BaseRef: "quay.io/rhel:9",
+					Index:   -1,
+					Copies:  []Copy{},
+					Mounts:  []Mount{},
+					Labels:  map[string]string{"description": "multi-line label test"},
 				},
 			}},
 		},
