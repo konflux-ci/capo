@@ -91,13 +91,6 @@ var ErrStorageSetup = errors.New("[ERR_STORAGE_SETUP] failed to set up container
 var ErrPullspecResolve = errors.New("[ERR_PULLSPEC_RESOLVE] failed to resolve pullspec")
 var ErrOCIConfig = errors.New("[ERR_OCI_CONFIG] failed to get OCI image config")
 var ErrSBOMScan = errors.New("[ERR_SBOM_SCAN] SBOM scan failed")
-var ErrUnsupportedMount = errors.New("[ERR_UNSUPPORTED_MOUNT] unsupported mount type")
-
-// ErrDuplicateAlias is returned when two stages in a Containerfile share
-// the same alias. Buildah behavior for duplicate aliases is undefined
-// (see https://github.com/containers/buildah/issues/6731), so capo skips
-// builder content identification to avoid producing incorrect results.
-var ErrDuplicateAlias = errors.New("[ERR_DUPLICATE_ALIAS] duplicate stage alias")
 
 // Scanner exposes methods used for scanning of buildah image builds, assigning
 // image origins to SBOM packages present in a built image.
@@ -165,29 +158,6 @@ func setupStore() (storage.Store, error) {
 	return store, nil
 }
 
-func checkUnsupportedFeatures(stages []containerfile.Stage) error {
-	seenAliases := make(map[string]bool)
-	for _, stage := range stages {
-		if stage.Index != -1 && seenAliases[stage.Alias] {
-			return fmt.Errorf(
-				"stage alias %q is used more than once: %w",
-				stage.Alias, ErrDuplicateAlias,
-			)
-		}
-		seenAliases[stage.Alias] = true
-
-		for _, mount := range stage.Mounts {
-			if mount.MountType == containerfile.MountTypeBind && mount.FromRaw != "" {
-				return fmt.Errorf(
-					"builder content resolution is unsupported for RUN --mount=type=bind: %w",
-					ErrUnsupportedMount,
-				)
-			}
-		}
-	}
-	return nil
-}
-
 // Scan reads the passed containerfile stages, resolves true content origin,
 // extracts relevant content from buildah storage and scans it using syft.
 // Returns a PackageMetadata struct containing packages and their origin information
@@ -195,7 +165,7 @@ func checkUnsupportedFeatures(stages []containerfile.Stage) error {
 func (s *Scanner) Scan(
 	cf containerfile.Containerfile,
 ) (PackageMetadata, error) {
-	if err := checkUnsupportedFeatures(cf.Stages); err != nil {
+	if err := preflightCheck(cf); err != nil {
 		return PackageMetadata{}, err
 	}
 

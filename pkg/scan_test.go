@@ -1423,20 +1423,6 @@ func TestResolveRelativeDestination(t *testing.T) {
 	}
 }
 
-func TestDuplicateAliasIsRejected(t *testing.T) {
-	t.Parallel()
-	stages := []containerfile.Stage{
-		{Alias: "builder", Base: "quay.io/rhel:9", BaseRef: "quay.io/rhel:9", Index: 0},
-		{Alias: "builder", Base: "quay.io/fedora:42", BaseRef: "quay.io/fedora:42", Index: 1},
-		{Alias: containerfile.FinalStage, Base: "scratch", BaseRef: "scratch", Index: -1},
-	}
-
-	err := checkUnsupportedFeatures(stages)
-	if !errors.Is(err, ErrDuplicateAlias) {
-		t.Fatalf("expected ErrDuplicateAlias, got: %v", err)
-	}
-}
-
 func TestGetPackageSourcesError(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
@@ -1481,6 +1467,141 @@ func TestGetPackageSourcesError(t *testing.T) {
 			}
 			if !errors.Is(err, test.expectedErr) {
 				t.Fatalf("expected error wrapping %v, got: %v", test.expectedErr, err)
+			}
+		})
+	}
+}
+
+func TestScanPreflightErrors(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		cf         containerfile.Containerfile
+		expectErrs []error
+		rejectErrs []error
+	}{
+		"builder alias used as final base": {
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/golang:1.22",
+					BaseRef: "docker.io/library/golang:1.22",
+					Index:   0,
+				},
+				{
+					Alias:   containerfile.FinalStage,
+					Base:    "builder",
+					BaseRef: "builder",
+					Index:   -1,
+				},
+			}},
+			expectErrs: []error{ErrUnsupportedFeature, ErrBuilderIsFinalBase},
+			rejectErrs: []error{ErrDuplicateAlias, ErrMountTypeBind},
+		},
+		"builder referenced by numeric index as final base": {
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/golang:1.22",
+					BaseRef: "docker.io/library/golang:1.22",
+					Index:   0,
+				},
+				{
+					Alias:   containerfile.FinalStage,
+					Base:    "0",
+					BaseRef: "0",
+					Index:   -1,
+				},
+			}},
+			expectErrs: []error{ErrUnsupportedFeature, ErrBuilderIsFinalBase},
+			rejectErrs: []error{ErrDuplicateAlias, ErrMountTypeBind},
+		},
+		"duplicate stage alias": {
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/golang:1.22",
+					BaseRef: "docker.io/library/golang:1.22",
+					Index:   0,
+				},
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/node:20",
+					BaseRef: "docker.io/library/node:20",
+					Index:   1,
+				},
+				{
+					Alias:   containerfile.FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
+				},
+			}},
+			expectErrs: []error{ErrUnsupportedFeature, ErrDuplicateAlias},
+			rejectErrs: []error{ErrBuilderIsFinalBase, ErrMountTypeBind},
+		},
+		"bind mount with from": {
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/golang:1.22",
+					BaseRef: "docker.io/library/golang:1.22",
+					Index:   0,
+					Mounts: []containerfile.Mount{
+						{MountType: containerfile.MountTypeBind, FromRaw: "docker.io/library/some-image:latest"},
+					},
+				},
+				{
+					Alias:   containerfile.FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
+				},
+			}},
+			expectErrs: []error{ErrUnsupportedFeature, ErrMountTypeBind},
+			rejectErrs: []error{ErrBuilderIsFinalBase, ErrDuplicateAlias},
+		},
+		"multiple preflight errors": {
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/golang:1.22",
+					BaseRef: "docker.io/library/golang:1.22",
+					Index:   0,
+				},
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/node:20",
+					BaseRef: "docker.io/library/node:20",
+					Index:   1,
+				},
+				{
+					Alias:   containerfile.FinalStage,
+					Base:    "builder",
+					BaseRef: "builder",
+					Index:   -1,
+				},
+			}},
+			expectErrs: []error{ErrUnsupportedFeature, ErrBuilderIsFinalBase, ErrDuplicateAlias},
+			rejectErrs: []error{ErrMountTypeBind},
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := &Scanner{}
+			_, err := s.Scan(tc.cf)
+
+			for _, expected := range tc.expectErrs {
+				if !errors.Is(err, expected) {
+					t.Errorf("expected error wrapping %v, got: %v", expected, err)
+				}
+			}
+
+			for _, rejected := range tc.rejectErrs {
+				if errors.Is(err, rejected) {
+					t.Errorf("unexpected error %v in: %v", rejected, err)
+				}
 			}
 		})
 	}
