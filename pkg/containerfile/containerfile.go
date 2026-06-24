@@ -87,6 +87,39 @@ type Containerfile struct {
 	Stages []Stage
 }
 
+// Return a stage by its name (alias) or numerical (index) reference. Return
+// nil if it was not found.
+func (c Containerfile) StageByRef(ref string) *Stage {
+	i, err := strconv.Atoi(ref)
+	if err == nil {
+		return c.StageByIndex(i)
+	}
+
+	for _, st := range c.Stages {
+		if st.Alias == ref {
+			return &st
+		}
+	}
+
+	return nil
+}
+
+// Return a stage by its index or nil if the index is out of bounds.
+func (c Containerfile) StageByIndex(index int) *Stage {
+	if index >= 0 && index < len(c.Stages) {
+		return &c.Stages[index]
+	}
+	return nil
+}
+
+// Return a slice of builder stages (all stages except the final).
+func (c Containerfile) BuilderStages() []Stage {
+	if len(c.Stages) == 0 {
+		return nil
+	}
+	return c.Stages[:len(c.Stages)-1]
+}
+
 // A builder or final stage in a Containerfile.
 type Stage struct {
 	// Alias of the builder stage or equal to FinalStage if final.

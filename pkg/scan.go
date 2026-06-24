@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/konflux-ci/capo/internal/sbom"
@@ -205,12 +204,12 @@ func (s *Scanner) Scan(
 	}
 	s.logger.Debug("parsed containerfile stages", "stages", cf.Stages)
 
-	digests, err := getImageDigests(s.sclient, cf.Stages)
+	digests, err := getImageDigests(s.sclient, cf)
 	if err != nil {
 		return PackageMetadata{}, err
 	}
 
-	roots, externals, err := getPackageSources(s.sclient, cf.Stages, digests)
+	roots, externals, err := getPackageSources(s.sclient, cf, digests)
 	if err != nil {
 		return PackageMetadata{}, err
 	}
@@ -238,11 +237,12 @@ func (s *Scanner) Scan(
 // container storage. Chained stages are skipped (their Base is already the
 // root pullspec, resolved by the parser).
 func getImageDigests(
-	storageClient storageclient.Client, stages []containerfile.Stage,
+	storageClient storageclient.Client, cf containerfile.Containerfile,
 ) (map[string]digest.Digest, error) {
 	res := make(map[string]digest.Digest)
 
-	for _, stage := range stages[:len(stages)-1] {
+
+	for _, stage := range cf.BuilderStages() {
 		// This deduplication check covers both duplicate pullspecs across
 		// the containerfile and implicitly skips chained stages (their root
 		// stage already resolved the shared base pullspec).
@@ -260,7 +260,7 @@ func getImageDigests(
 		}
 	}
 
-	for _, stage := range stages {
+	for _, stage := range cf.Stages {
 		for _, cp := range stage.Copies {
 			if cp.Type == containerfile.CopyTypeBuilder {
 				continue
@@ -305,25 +305,13 @@ func attachDigest(pullspec string, dig digest.Digest) (string, error) {
 // to get their default workdirs for relative path resolution in copy destinations.
 func getPackageSources(
 	storageClient storageclient.Client,
-	stages []containerfile.Stage,
+	cf containerfile.Containerfile,
 	digests map[string]digest.Digest,
 ) ([]BuilderPackageSourceRoot, []ExternalPackageSource, error) {
-	// lookup maps for traceSource
-	aliasToIndex := make(map[string]int)
-	indexToStage := make(map[int]*containerfile.Stage)
-	for i := range stages[:len(stages)-1] {
-		st := &stages[i]
-		aliasToIndex[st.Alias] = st.Index
-		indexToStage[st.Index] = st
-		// also map numeric index so COPY --from=<index> resolves
-		// correctly even when stage aliases are present
-		aliasToIndex[strconv.Itoa(i)] = st.Index
-	}
-
 	// mapping of bases used in the containerfile to their initial working
 	// directories
 	baseToWorkdir := make(map[string]string)
-	for _, s := range stages[:len(stages)-1] {
+	for _, s := range cf.BuilderStages() {
 		if storageclient.IsSpecialBase(s.Base) {
 			continue
 		}
@@ -339,7 +327,7 @@ func getPackageSources(
 	// The following code block reads all the builder COPY-ies in the final stage
 	// and recursively traces their content to their respective origins in previous stages.
 	// Builds a map between stage indices and the source paths that originated in them.
-	final := &stages[len(stages)-1]
+	final := &cf.Stages[len(cf.Stages)-1]
 	builderStageAcc := make(map[int][]string)
 	externalAcc := make(map[string][]string)
 
@@ -349,15 +337,16 @@ func getPackageSources(
 			// otherwise the cp.from is a pullspec and it is an external copy
 			// Multiple copies from same external image (multiple COPY instructions referencing same image,
 			// not sources) are grouped under same pullspec.
-			if idx, isBuilder := aliasToIndex[cp.From]; isBuilder {
-				traceSource(source, idx, builderStageAcc, indexToStage, aliasToIndex, externalAcc, baseToWorkdir)
+			from := cf.StageByRef(cp.From)
+			if from != nil {
+				traceSource(source, from.Index, cf, builderStageAcc, externalAcc, baseToWorkdir)
 			} else {
 				externalAcc[cp.From] = append(externalAcc[cp.From], source)
 			}
 		}
 	}
 
-	roots, err := buildSourceTree(stages, builderStageAcc, aliasToIndex, digests)
+	roots, err := buildSourceTrees(cf, builderStageAcc, digests)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -387,18 +376,17 @@ func getPackageSources(
 	return roots, externals, nil
 }
 
-// buildSourceTree constructs a tree of BuilderPackageSourceRoot (non-chained stages)
+// buildSourceTree constructs trees of BuilderPackageSourceRoot (non-chained stages)
 // with BuilderPackageSourceNode descendants (chained stages) from the traced sources.
-func buildSourceTree(
-	stages []containerfile.Stage,
+func buildSourceTrees(
+	cf containerfile.Containerfile,
 	builderStageAcc map[int][]string,
-	aliasToIndex map[string]int,
 	digests map[string]digest.Digest,
 ) ([]BuilderPackageSourceRoot, error) {
 	rootByIndex := make(map[int]*BuilderPackageSourceRoot)
 	nodeByIndex := make(map[int]*BuilderPackageSourceNode)
 
-	for _, builderStage := range stages[:len(stages)-1] {
+	for _, builderStage := range cf.BuilderStages() {
 		isChained := builderStage.Base != builderStage.BaseRef
 		sources := builderStageAcc[builderStage.Index]
 
@@ -432,22 +420,19 @@ func buildSourceTree(
 			nodeByIndex[builderStage.Index] = node
 
 			// attach to parent — parent can be a root or another node
-			parentIdx := aliasToIndex[builderStage.BaseRef]
-			if parentRoot, ok := rootByIndex[parentIdx]; ok {
+			parentStage := cf.StageByRef(builderStage.BaseRef)
+
+			if parentRoot, ok := rootByIndex[parentStage.Index]; ok {
 				parentRoot.descendants = append(parentRoot.descendants, node)
-			} else if parentNode, ok := nodeByIndex[parentIdx]; ok {
+			} else if parentNode, ok := nodeByIndex[parentStage.Index]; ok {
 				parentNode.descendants = append(parentNode.descendants, node)
 			}
 		}
 	}
 
-	// collect roots in stage order after building the tree (rootByIndex is a map
-	// which does not guarantee iteration order)
 	roots := make([]BuilderPackageSourceRoot, 0, len(rootByIndex))
-	for _, stage := range stages[:len(stages)-1] {
-		if root, ok := rootByIndex[stage.Index]; ok {
-			roots = append(roots, *root)
-		}
+	for _, root := range rootByIndex {
+		roots = append(roots, *root)
 	}
 
 	return roots, nil
@@ -461,13 +446,13 @@ func buildSourceTree(
 func traceSource(
 	source string,
 	stageIndex int,
+	cf containerfile.Containerfile,
 	acc map[int][]string,
-	indexToStage map[int]*containerfile.Stage,
-	aliasToIndex map[string]int,
 	externalAcc map[string][]string,
 	baseToWorkdir map[string]string,
 ) {
-	currStage := indexToStage[stageIndex]
+	currStage := cf.StageByIndex(stageIndex)
+
 	coversMultipleFiles := strings.HasSuffix(source, "/") || strings.ContainsAny(source, "*?[]")
 
 	baseWorkdir, ok := baseToWorkdir[currStage.Base]
@@ -494,9 +479,9 @@ func traceSource(
 				coversMultipleFiles = true
 			}
 			for _, s := range cp.Sources {
-				if nextIdx, ok := aliasToIndex[cp.From]; ok {
-					// builder stage - continue tracing
-					traceSource(s, nextIdx, acc, indexToStage, aliasToIndex, externalAcc, baseToWorkdir)
+				prevStage := cf.StageByRef(cp.From)
+				if prevStage != nil {
+					traceSource(s, prevStage.Index, cf, acc, externalAcc, baseToWorkdir)
 				} else {
 					// external image - add as external source
 					externalAcc[cp.From] = append(externalAcc[cp.From], s)
@@ -514,8 +499,9 @@ func traceSource(
 	}
 
 	// chained stage — propagate source to parent for builder content scanning
-	if parentIdx, ok := aliasToIndex[currStage.BaseRef]; ok {
-		traceSource(source, parentIdx, acc, indexToStage, aliasToIndex, externalAcc, baseToWorkdir)
+	parentStage := cf.StageByRef(currStage.BaseRef)
+	if parentStage != nil {
+		traceSource(source, parentStage.Index, cf, acc, externalAcc, baseToWorkdir)
 	}
 }
 
