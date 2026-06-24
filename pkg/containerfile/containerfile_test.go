@@ -1119,6 +1119,110 @@ func TestParseBuildArgFileNotFound(t *testing.T) {
 	}
 }
 
+func TestStageByRef(t *testing.T) {
+	t.Parallel()
+
+	stages := []Stage{
+		{Alias: "builder", Base: "docker.io/library/fedora:latest", Index: 0},
+		{Alias: "tools", Base: "docker.io/library/alpine:latest", Index: 1},
+		{Alias: FinalStage, Base: "scratch", Index: -1},
+	}
+	cf := Containerfile{Stages: stages}
+
+	tests := map[string]struct {
+		ref      string
+		expected *Stage
+	}{
+		"numeric index": {
+			ref:      "0",
+			expected: &cf.Stages[0],
+		},
+		"alias match": {
+			ref:      "tools",
+			expected: &cf.Stages[1],
+		},
+		"alias not found": {
+			ref:      "nonexistent",
+			expected: nil,
+		},
+		"numeric index out of bounds": {
+			ref:      "99",
+			expected: nil,
+		},
+		"negative numeric string": {
+			ref:      "-1",
+			expected: nil,
+		},
+		"numeric ref prefers index over alias": {
+			ref:      "1",
+			expected: &cf.Stages[1],
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			actual := cf.StageByRef(test.ref)
+			if diff := cmp.Diff(test.expected, actual); diff != "" {
+				t.Errorf("StageByRef(%q) mismatch (-want +got):\n%s", test.ref, diff)
+			}
+		})
+	}
+}
+
+func TestStageByIndex(t *testing.T) {
+	t.Parallel()
+
+	stages := []Stage{
+		{Alias: "builder", Base: "docker.io/library/fedora:latest", Index: 0},
+		{Alias: "tools", Base: "docker.io/library/alpine:latest", Index: 1},
+		{Alias: FinalStage, Base: "scratch", Index: -1},
+	}
+	cf := Containerfile{Stages: stages}
+
+	tests := map[string]struct {
+		cf       Containerfile
+		index    int
+		expected *Stage
+	}{
+		"first stage": {
+			cf:       cf,
+			index:    0,
+			expected: &cf.Stages[0],
+		},
+		"last stage": {
+			cf:       cf,
+			index:    2,
+			expected: &cf.Stages[2],
+		},
+		"out of bounds": {
+			cf:       cf,
+			index:    3,
+			expected: nil,
+		},
+		"negative index": {
+			cf:       cf,
+			index:    -1,
+			expected: nil,
+		},
+		"empty stages": {
+			cf:       Containerfile{},
+			index:    0,
+			expected: nil,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			actual := test.cf.StageByIndex(test.index)
+			if diff := cmp.Diff(test.expected, actual); diff != "" {
+				t.Errorf("StageByIndex(%d) mismatch (-want +got):\n%s", test.index, diff)
+			}
+		})
+	}
+}
+
 func TestParseBuildArgMergeWithEnv(t *testing.T) {
 	t.Setenv("C", "from-env-c")
 

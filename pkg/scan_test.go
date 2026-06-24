@@ -36,14 +36,14 @@ func configWithWorkdir(workdir string) storageclient.OCIImageConfig {
 func TestGetPackageSources(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
-		stages            []containerfile.Stage
+		cf                containerfile.Containerfile
 		digests           map[string]digest.Digest
 		configs           map[string]storageclient.OCIImageConfig
 		expectedRoots     []BuilderPackageSourceRoot
 		expectedExternals []ExternalPackageSource
 	}{
 		"only external copy in final": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   containerfile.FinalStage,
 					Base:    "scratch",
@@ -58,7 +58,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("abc123"),
 			},
@@ -73,7 +73,7 @@ func TestGetPackageSources(t *testing.T) {
 			},
 		},
 		"copies in final stage only": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder1",
 					Base:    "docker.io/library/fedora:latest",
@@ -108,7 +108,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("def456"),
 				"docker.io/alpine/helm:latest":    testDigest("ca0789"),
@@ -136,7 +136,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"recursive multi-stage file copy": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder1",
 					Base:    "docker.io/library/fedora:latest",
@@ -172,7 +172,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("da0012"),
 				"docker.io/alpine/helm:latest":    testDigest("ea0345"),
@@ -200,7 +200,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"recursive multi-stage file copy - mixed sources": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder1",
 					Base:    "docker.io/library/fedora:latest",
@@ -236,7 +236,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("fa0678"),
 				"docker.io/alpine/helm:latest":    testDigest("5a0901"),
@@ -264,7 +264,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"multi-stage directory copy": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder1",
 					Base:    "docker.io/library/fedora:latest",
@@ -306,7 +306,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("ba0234"),
 				"docker.io/alpine/helm:latest":    testDigest("0a0567"),
@@ -334,7 +334,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"ignore non-copied content": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder1",
 					Base:    "docker.io/library/fedora:latest",
@@ -370,7 +370,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("bcd890"),
 				"docker.io/alpine/helm:latest":    testDigest("ef0123"),
@@ -398,7 +398,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"complex multi-stage with multiple final copies": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder1",
 					Base:    "docker.io/library/fedora:latest",
@@ -446,7 +446,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("a1f456"),
 				"docker.io/alpine/helm:latest":    testDigest("b2f789"),
@@ -474,7 +474,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"wildcard copy in final stage": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder",
 					Base:    "docker.io/library/fedora:latest",
@@ -495,7 +495,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("a1f456"),
 			},
@@ -514,7 +514,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"wildcard traced through multiple stages": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder1",
 					Base:    "docker.io/library/fedora:latest",
@@ -548,7 +548,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("a1f456"),
 				"docker.io/alpine/helm:latest":    testDigest("abcdef"),
@@ -576,7 +576,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"mixed wildcards and regular files": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder",
 					Base:    "docker.io/library/fedora:latest",
@@ -597,7 +597,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("a1f456"),
 			},
@@ -616,7 +616,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"relative destination resolution": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder1",
 					Base:    "docker.io/library/fedora:latest",
@@ -667,7 +667,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("aaa111"),
 				"docker.io/library/node:latest":   testDigest("bbb222"),
@@ -695,7 +695,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"mixed destinations with workdir variants": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder1",
 					Base:    "docker.io/library/fedora:latest",
@@ -774,7 +774,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("ccc333"),
 				"docker.io/library/alpine:latest": testDigest("ddd444"),
@@ -802,7 +802,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"multi-stage tracing with workdir in intermediate stage": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder1",
 					Base:    "docker.io/library/fedora:latest",
@@ -853,7 +853,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("111999"),
 				"docker.io/library/alpine:latest": testDigest("222000"),
@@ -890,7 +890,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"different stages with different base image workdirs": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "go-builder",
 					Base:    "docker.io/library/golang:latest",
@@ -953,7 +953,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/golang:latest":    testDigest("444222"),
 				"docker.io/library/node:latest":      testDigest("555333"),
@@ -999,7 +999,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"numeric index COPY --from in final stage with aliased stages": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder",
 					Base:    "docker.io/library/fedora:latest",
@@ -1021,7 +1021,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("aaa111"),
 			},
@@ -1040,7 +1040,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"numeric index COPY --from in builder stage with aliased stages": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder1",
 					Base:    "docker.io/library/fedora:latest",
@@ -1076,7 +1076,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("bbb222"),
 				"docker.io/alpine/helm:latest":    testDigest("ccc333"),
@@ -1107,7 +1107,7 @@ func TestGetPackageSources(t *testing.T) {
 			// FROM fedora AS parent    (non-chained, index 0)
 			// FROM parent AS child     (chained, index 1, BaseRef=parent)
 			// FROM scratch             (final, copies from child)
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "parent",
 					Base:    "docker.io/library/fedora:latest",
@@ -1136,7 +1136,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("aa1111"),
 			},
@@ -1165,7 +1165,7 @@ func TestGetPackageSources(t *testing.T) {
 			// FROM fedora AS parent        (non-chained, index 0)
 			// FROM parent AS empty-child   (chained, index 1, BaseRef=parent, no intermediate expected)
 			// FROM scratch                 (final, copies from empty-child)
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "parent",
 					Base:    "docker.io/library/fedora:latest",
@@ -1194,7 +1194,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("bb2222"),
 			},
@@ -1224,7 +1224,7 @@ func TestGetPackageSources(t *testing.T) {
 			// FROM shared AS left     (chained, index 1, BaseRef=shared)
 			// FROM shared AS right    (chained, index 2, BaseRef=shared)
 			// FROM scratch            (final, copies from both left and right)
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "shared",
 					Base:    "docker.io/library/fedora:latest",
@@ -1266,7 +1266,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("cc3333"),
 			},
@@ -1297,7 +1297,7 @@ func TestGetPackageSources(t *testing.T) {
 			expectedExternals: []ExternalPackageSource{},
 		},
 		"external COPY --from in builder stage": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder",
 					Base:    "docker.io/library/fedora:latest",
@@ -1326,7 +1326,7 @@ func TestGetPackageSources(t *testing.T) {
 						},
 					},
 				},
-			},
+			}},
 			digests: map[string]digest.Digest{
 				"docker.io/library/fedora:latest": testDigest("eee111"),
 				"docker.io/library/external:latest":       testDigest("fff222"),
@@ -1361,7 +1361,7 @@ func TestGetPackageSources(t *testing.T) {
 				test.digests, test.configs,
 			)
 
-			roots, externals, err := getPackageSources(client, test.stages, test.digests)
+			roots, externals, err := getPackageSources(client, test.cf, test.digests)
 			if err != nil {
 				t.Fatalf("getPackageSources returned error: %v", err)
 			}
@@ -1369,6 +1369,7 @@ func TestGetPackageSources(t *testing.T) {
 			rootDiff := cmp.Diff(
 				test.expectedRoots, roots,
 				cmp.AllowUnexported(BuilderPackageSourceRoot{}, BuilderPackageSourceNode{}),
+				cmpopts.SortSlices(func(a, b BuilderPackageSourceRoot) bool { return a.index < b.index }),
 				cmpopts.EquateEmpty(),
 			)
 			if rootDiff != "" {
@@ -1439,13 +1440,13 @@ func TestDuplicateAliasIsRejected(t *testing.T) {
 func TestGetPackageSourcesError(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
-		stages      []containerfile.Stage
+		cf          containerfile.Containerfile
 		digests     map[string]digest.Digest
 		configs     map[string]storageclient.OCIImageConfig
 		expectedErr error
 	}{
 		"GetImageConfig error": {
-			stages: []containerfile.Stage{
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
 					Alias:   "builder",
 					Base:    "docker.io/library/fedora:latest",
@@ -1460,7 +1461,7 @@ func TestGetPackageSourcesError(t *testing.T) {
 					Index:   -1,
 					Copies:  []containerfile.Copy{},
 				},
-			},
+			}},
 			configs:     map[string]storageclient.OCIImageConfig{},
 			expectedErr: ErrOCIConfig,
 		},
@@ -1474,7 +1475,7 @@ func TestGetPackageSourcesError(t *testing.T) {
 				test.digests, test.configs,
 			)
 
-			_, _, err := getPackageSources(client, test.stages, test.digests)
+			_, _, err := getPackageSources(client, test.cf, test.digests)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
