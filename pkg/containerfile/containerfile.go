@@ -282,17 +282,21 @@ func parseStage(s imagebuilder.Stage, alias, base, baseRef string, index int, st
 	mounts := make([]Mount, 0)
 	labels := make(map[string]string)
 	workdir := ""
-	headingEnv := argsMapToSlice(s.Builder.HeadingArgs)
-	userEnv := argsMapToSlice(s.Builder.Args)
+	// populate ENV, keep a map for keeping track of overrides
+	envMap := make(map[string]string)
+	maps.Copy(envMap, s.Builder.HeadingArgs)
+	maps.Copy(envMap, s.Builder.Args)
 
-	// user provided args override the heading ARGs,
-	// so they're appended second to take priority
-	env := append(headingEnv, userEnv...)
+	// Env variables compiled to a format understandable by imagebuilder.ProcessWord
+	env := argsMapToSlice(envMap)
 
 	for _, child := range s.Node.Children {
 		switch child.Value {
 		case "workdir":
-			newWorkdir := child.Next.Value
+			newWorkdir, err := imagebuilder.ProcessWord(child.Next.Value, env)
+			if err != nil {
+				return Stage{}, fmt.Errorf("%w: %w", ErrParse, err)
+			}
 			if filepath.IsAbs(newWorkdir) {
 				workdir = newWorkdir
 			} else {
@@ -322,6 +326,18 @@ func parseStage(s imagebuilder.Stage, alias, base, baseRef string, index int, st
 				return Stage{}, err
 			}
 			maps.Copy(labels, parsed)
+
+		case "env":
+			// the env should respect overwrites and should only update
+			// once per instruction. See the spec for more details:
+			// https://docs.docker.com/reference/dockerfile/#environment-replacement
+			parsed, err := parseEnv(child, env)
+			if err != nil {
+				return Stage{}, err
+			}
+			// Update map so overriding works as expected.
+			maps.Copy(envMap, parsed)
+			env = argsMapToSlice(envMap)
 		}
 	}
 
@@ -420,8 +436,8 @@ func parseMount(mountOpts string, env []string, stageNames []string) (*Mount, er
 }
 
 // normalizeSources normalizes the paths in the passed sources slice to absolute clean paths.
-// It also preserves trailing slash to directory paths.
-func normalizeSources(sources []string) []string {
+// It also preserves trailing slash to directory paths and expands environment variables.
+func normalizeSources(sources []string, env []string) ([]string, error) {
 	normalizedPaths := make([]string, 0, len(sources))
 	for _, s := range sources {
 		isDir := strings.HasSuffix(s, "/")
@@ -432,9 +448,13 @@ func normalizeSources(sources []string) []string {
 		if isDir {
 			s += "/"
 		}
-		normalizedPaths = append(normalizedPaths, s)
+		expandedPath, err := imagebuilder.ProcessWord(s, env)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrParse, err)
+		}
+		normalizedPaths = append(normalizedPaths, expandedPath)
 	}
-	return normalizedPaths
+	return normalizedPaths, nil
 }
 
 // parseCopy takes a raw dockerfile parser Node and optionally returns a pointer
@@ -468,9 +488,15 @@ func parseCopy(node *parser.Node, workdir string, env []string, stageNames []str
 		}
 
 		sources := args[:len(args)-1]
-		sources = normalizeSources(sources)
+		sources, err = normalizeSources(sources, env)
+		if err != nil {
+			return nil, err
+		}
 
-		destination := args[len(args)-1]
+		destination, err := imagebuilder.ProcessWord(args[len(args)-1], env)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", ErrParse, err)
+		}
 
 		cpType := CopyTypeBuilder
 		if !isStageRef(from, stageNames) {
@@ -489,8 +515,10 @@ func parseCopy(node *parser.Node, workdir string, env []string, stageNames []str
 	return nil, nil
 }
 
-func parseLabels(node *parser.Node, env []string) (map[string]string, error) {
-	labels := make(map[string]string)
+// parseKeyValue is a helper function that parses key-value pairs from a parent node.
+// It iterates over two nodes at the same time - key and value.
+func parseKeyValue(node *parser.Node, env []string) (map[string]string, error) {
+	result := make(map[string]string)
 	// iterate over two nodes at the same time - key and value
 	curr := node.Next
 	for curr != nil && curr.Next != nil {
@@ -502,8 +530,18 @@ func parseLabels(node *parser.Node, env []string) (map[string]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrParse, err)
 		}
-		labels[key] = val
+		result[key] = val
 		curr = curr.Next.Next
 	}
-	return labels, nil
+	return result, nil
+}
+
+func parseLabels(node *parser.Node, env []string) (map[string]string, error) {
+	return parseKeyValue(node, env)
+}
+
+// parseEnv parses an ENV instruction and returns a map of names and values.
+// It does no changes to the passed env slice.
+func parseEnv(node *parser.Node, env []string) (map[string]string, error) {
+	return parseKeyValue(node, env)
 }
