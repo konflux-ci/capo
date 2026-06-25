@@ -12,7 +12,6 @@ import (
 // ErrInvalidBuildArg is returned when a build argument line is not in KEY=VALUE format.
 var ErrInvalidBuildArg = errors.New("invalid build arg")
 
-
 // ReadBuildArg parses a build argument and writes it into args, matching
 // buildah semantics: KEY=VALUE stores the literal value (even if empty),
 // bare KEY inherits from the host environment (or deletes the key if unset).
