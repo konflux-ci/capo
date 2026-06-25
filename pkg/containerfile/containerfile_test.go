@@ -156,7 +156,7 @@ func TestParse(t *testing.T) {
 					},
 				},
 				{Alias: FinalStage, Base: "scratch", BaseRef: "scratch", Index: -1, Copies: []Copy{}, Mounts: []Mount{}},
-				},
+			},
 			},
 		},
 		"build target": {
@@ -958,7 +958,62 @@ label test"`,
 					},
 				}},
 			},
-		}},
+			}},
+		"env substitution": {
+			containerfile: `ARG FOO
+							FROM scratch AS builder
+							FROM scratch AS secondary
+							ENV FOO=baz
+							# BAR will be updated to baz, 
+							# whole instructions are processed at once
+							ENV FOO=bar BAR=$FOO
+							# must resolve to /bar
+							WORKDIR /${FOO}
+							COPY --from=builder /usr/bin/${BAR} /usr/trash/${BAR}
+							FROM scratch
+							# must resolve to /, ENV are stage-scoped
+							WORKDIR /${FOO}
+							COPY --from=secondary /usr/bin/baz pie`,
+
+			expected: Containerfile{Stages: []Stage{
+				{
+					Alias:   "builder",
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   0,
+				},
+				{
+					Alias:   "secondary",
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   1,
+					Copies: []Copy{
+						{
+							From:        "builder",
+							Sources:     []string{"/usr/bin/baz"},
+							Destination: "/usr/trash/baz",
+							Type:        CopyTypeBuilder,
+							Workdir:     "/bar",
+						},
+					},
+				},
+				{
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
+					Copies: []Copy{
+						{
+							From:        "secondary",
+							Sources:     []string{"/usr/bin/baz"},
+							Destination: "pie",
+							Type:        CopyTypeBuilder,
+							Workdir:     "/",
+						},
+					},
+				},
+			}},
+		},
 	}
 
 	for name, test := range tests {

@@ -517,9 +517,11 @@ func TestIntegration(t *testing.T) {
 				Tag: "test-arg-substitution",
 				ContainerfileContent: `ARG BASE_IMG=localhost/arg-base:latest
 										ARG BUILDER_STAGE=builder
+										ARG CONTENT_DIR
 
 										FROM ${BASE_IMG} AS ${BUILDER_STAGE}
-										COPY go_uuid.mod /content/app2/go.mod
+										ENV CONTENT_DIR=/content
+										COPY go_uuid.mod ${CONTENT_DIR}/app2/go.mod
 										COPY go_text.mod /untracked/builder/go.mod
 
 										FROM scratch
@@ -898,7 +900,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages] Grandparent, parent and child builder cascade with intermediate content": {
-						TestImage: BuildDefinition{
+			TestImage: BuildDefinition{
 				Tag: "test-chained-stages-cascade",
 				ContainerfileContent: `FROM localhost/builder-sync:latest AS grandparent
 										COPY go_uuid.mod /opt/app2/go.mod
@@ -955,7 +957,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages] Empty child chained stage (no build instructions)": {
-						TestImage: BuildDefinition{
+			TestImage: BuildDefinition{
 				Tag: "test-empty-chained-stage",
 				ContainerfileContent: `FROM localhost/capo-builder/go_builder:latest AS parent-stage
 										COPY go_uuid.mod /opt/app2/go.mod
@@ -994,7 +996,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages] Multiple empty chained stages with intermediate only in last stage": {
-						TestImage: BuildDefinition{
+			TestImage: BuildDefinition{
 				Tag: "test-empty-chain-cascade",
 				ContainerfileContent: `FROM localhost/builder-base:latest AS first
 
@@ -1035,7 +1037,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages] Complex cascade: non-empty, empty, non-empty, empty, non-empty": {
-						TestImage: BuildDefinition{
+			TestImage: BuildDefinition{
 				Tag: "test-complex-cascade",
 				ContainerfileContent: `FROM localhost/builder-base:latest AS stage1
 										COPY go_uuid.mod /opt/app1/go.mod
@@ -1096,7 +1098,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages] Empty chained stages copying only builder base content": {
-						TestImage: BuildDefinition{
+			TestImage: BuildDefinition{
 				Tag: "test-empty-chain-builder-only",
 				ContainerfileContent: `FROM localhost/builder-with-content:latest AS alias
 
@@ -1127,7 +1129,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 		"[Chained stages] Diamond dependency - two branches from same parent": {
-						TestImage: BuildDefinition{
+			TestImage: BuildDefinition{
 				Tag: "test-diamond-dependency",
 				ContainerfileContent: `FROM localhost/diamond-base:latest AS shared
 										COPY go_uuid.mod /shared/go.mod
