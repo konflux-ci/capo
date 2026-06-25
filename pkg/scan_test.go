@@ -1328,8 +1328,8 @@ func TestGetPackageSources(t *testing.T) {
 				},
 			}},
 			digests: map[string]digest.Digest{
-				"docker.io/library/fedora:latest": testDigest("eee111"),
-				"docker.io/library/external:latest":       testDigest("fff222"),
+				"docker.io/library/fedora:latest":   testDigest("eee111"),
+				"docker.io/library/external:latest": testDigest("fff222"),
 			},
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
