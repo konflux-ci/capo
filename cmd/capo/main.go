@@ -12,7 +12,7 @@ import (
 	"runtime/debug"
 
 	"github.com/konflux-ci/capo/pkg"
-	"github.com/konflux-ci/capo/pkg/buildargs"
+	"github.com/konflux-ci/capo/pkg/buildvars"
 	"github.com/konflux-ci/capo/pkg/containerfile"
 )
 
@@ -21,11 +21,14 @@ type args struct {
 	containerfilePath string
 	// Build arguments passed to buildah for the build
 	buildArgs map[string]string
+	// Environment variables passed to the build
+	envVars map[string]string
 	// Target stage of the buildah build
 	target string
 }
 
 var ErrBuildArg = errors.New("invalid build args syntax")
+var ErrEnvVar = errors.New("invalid environment variable syntax")
 var ErrNoContainerfile = errors.New("containerfile argument is required")
 var ErrJSONEncode = errors.New("error while encoding package metadata")
 
@@ -42,8 +45,19 @@ func parseArgs() (args, error) {
 		"build-arg",
 		"Build argument in the form KEY=VALUE or bare KEY (inherits from environment). Can be used multiple times.",
 		func(s string) error {
-			if err := buildargs.ReadBuildArg(s, buildArgs); err != nil {
+			if err := buildvars.ReadBuildVariable(s, buildArgs); err != nil {
 				return ErrBuildArg
+			}
+			return nil
+		},
+	)
+	buildEnvVars := make(map[string]string)
+	flag.Func(
+		"env",
+		"Environment variable in the form KEY=VALUE or bare KEY (inherits from environment). Can be used multiple times.",
+		func(s string) error {
+			if err := buildvars.ReadBuildVariable(s, buildEnvVars); err != nil {
+				return ErrEnvVar
 			}
 			return nil
 		},
@@ -64,11 +78,11 @@ func parseArgs() (args, error) {
 	flag.Parse()
 
 	if *buildArgFile != "" {
-		fileArgs, err := buildargs.ParseBuildArgFile(*buildArgFile)
+		fileArgs, err := buildvars.ParseBuildArgFile(*buildArgFile)
 		if err != nil {
 			return args{}, fmt.Errorf("parsing build-arg-file: %w", err)
 		}
-		buildArgs = buildargs.MergeBuildArgs(fileArgs, buildArgs)
+		buildArgs = buildvars.MergeBuildArgs(fileArgs, buildArgs)
 	}
 
 	if *cfPath == "" {
@@ -80,6 +94,7 @@ func parseArgs() (args, error) {
 		containerfilePath: *cfPath,
 		target:            *target,
 		buildArgs:         buildArgs,
+		envVars:           buildEnvVars,
 	}, nil
 }
 
@@ -87,8 +102,9 @@ func parseArgs() (args, error) {
 // These are used in the containerfile parser.
 func buildOptsFromArgs(args args) containerfile.BuildOptions {
 	return containerfile.BuildOptions{
-		Args:   args.buildArgs,
-		Target: args.target,
+		Args:    args.buildArgs,
+		EnvVars: args.envVars,
+		Target:  args.target,
 	}
 }
 

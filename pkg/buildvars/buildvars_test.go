@@ -1,6 +1,6 @@
 //go:build unit
 
-package buildargs
+package buildvars
 
 import (
 	"os"

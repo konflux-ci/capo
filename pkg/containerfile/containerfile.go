@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/konflux-ci/capo/pkg/buildargs"
+	"github.com/konflux-ci/capo/pkg/buildvars"
 	"github.com/openshift/imagebuilder"
 	"github.com/openshift/imagebuilder/dockerfile/parser"
 )
@@ -152,6 +152,9 @@ type BuildOptions struct {
 	// environment, matching buildah semantics.
 	BuildArgFilePath string
 
+	// Environment variables passed to the build.
+	EnvVars map[string]string
+
 	// Target stage of the buildah build
 	Target string
 }
@@ -170,11 +173,11 @@ func Parse(reader io.Reader, opts BuildOptions) (Containerfile, error) {
 
 	args := opts.Args
 	if opts.BuildArgFilePath != "" {
-		fileArgs, err := buildargs.ParseBuildArgFile(opts.BuildArgFilePath)
+		fileArgs, err := buildvars.ParseBuildArgFile(opts.BuildArgFilePath)
 		if err != nil {
 			return Containerfile{}, fmt.Errorf("parsing build-arg-file: %w", err)
 		}
-		args = buildargs.MergeBuildArgs(fileArgs, opts.Args)
+		args = buildvars.MergeBuildArgs(fileArgs, opts.Args)
 	}
 
 	node, err := imagebuilder.ParseDockerfile(reader)
@@ -230,7 +233,7 @@ func Parse(reader io.Reader, opts BuildOptions) (Containerfile, error) {
 		}
 		aliasToBase[alias] = base
 
-		stage, err := parseStage(s, alias, base, baseRef, stageIndex, stageNames)
+		stage, err := parseStage(s, alias, base, baseRef, stageIndex, stageNames, opts.EnvVars)
 		if err != nil {
 			return Containerfile{Stages: res}, err
 		}
@@ -277,7 +280,13 @@ func resolvePullspecs(stages []imagebuilder.Stage) ([]string, error) {
 // Uses the passed previous stageNames to classify whether COPY --from and
 // RUN --mount references point to a stage or directly to an image.
 // WARNING: named contexts in the Containerfile are not supported
-func parseStage(s imagebuilder.Stage, alias, base, baseRef string, index int, stageNames []string) (Stage, error) {
+func parseStage(
+	s imagebuilder.Stage,
+	alias, base, baseRef string,
+	index int,
+	stageNames []string,
+	envVars map[string]string,
+) (Stage, error) {
 	copies := make([]Copy, 0)
 	mounts := make([]Mount, 0)
 	labels := make(map[string]string)
@@ -286,6 +295,7 @@ func parseStage(s imagebuilder.Stage, alias, base, baseRef string, index int, st
 	envMap := make(map[string]string)
 	maps.Copy(envMap, s.Builder.HeadingArgs)
 	maps.Copy(envMap, s.Builder.Args)
+	maps.Copy(envMap, envVars)
 
 	// Env variables compiled to a format understandable by imagebuilder.ProcessWord
 	env := argsMapToSlice(envMap)

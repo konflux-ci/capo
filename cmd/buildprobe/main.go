@@ -8,7 +8,7 @@ import (
 	"os"
 	"runtime/debug"
 
-	"github.com/konflux-ci/capo/pkg/buildargs"
+	"github.com/konflux-ci/capo/pkg/buildvars"
 	"github.com/konflux-ci/capo/pkg/probe"
 	"github.com/konflux-ci/capo/pkg/storageclient"
 	"go.yaml.in/yaml/v3"
@@ -37,11 +37,14 @@ type args struct {
 	containerfilePath string
 	// Build arguments passed to buildah for the build
 	buildArgs map[string]string
+	// Environment variables passed to the build
+	envVars map[string]string
 	// Target stage of the buildah build
 	target string
 }
 
 var ErrBuildArg = errors.New("invalid build args syntax")
+var ErrBuildEnv = errors.New("invalid build env syntax")
 var ErrNoContainerfile = errors.New("containerfile argument is required")
 var ErrNoTag = errors.New("tag argument is required")
 var ErrYAMLEncode = errors.New("error while encoding build metadata")
@@ -65,13 +68,24 @@ func parseArgs() (args, error) {
 		"build-arg",
 		"Build argument in the form KEY=VALUE or bare KEY (inherits from environment). Can be used multiple times.",
 		func(s string) error {
-			if err := buildargs.ReadBuildArg(s, cliArgs); err != nil {
+			if err := buildvars.ReadBuildVariable(s, cliArgs); err != nil {
 				return ErrBuildArg
 			}
 			return nil
 		},
 	)
 
+	cliEnv := make(map[string]string)
+	flag.Func(
+		"env",
+		"Environment variable in the form KEY=VALUE or bare KEY (inherits from environment). Can be used multiple times.",
+		func(s string) error {
+			if err := buildvars.ReadBuildVariable(s, cliEnv); err != nil {
+				return ErrBuildEnv
+			}
+			return nil
+		},
+	)
 	target := flag.String(
 		"target",
 		"",
@@ -88,11 +102,11 @@ func parseArgs() (args, error) {
 
 	var buildArgs map[string]string
 	if *buildArgFile != "" {
-		fileArgs, err := buildargs.ParseBuildArgFile(*buildArgFile)
+		fileArgs, err := buildvars.ParseBuildArgFile(*buildArgFile)
 		if err != nil {
 			return args{}, fmt.Errorf("parsing build-arg-file: %w", err)
 		}
-		buildArgs = buildargs.MergeBuildArgs(fileArgs, cliArgs)
+		buildArgs = buildvars.MergeBuildArgs(fileArgs, cliArgs)
 	} else {
 		buildArgs = cliArgs
 	}
@@ -112,6 +126,7 @@ func parseArgs() (args, error) {
 		containerfilePath: *cfPath,
 		target:            *target,
 		buildArgs:         buildArgs,
+		envVars:           cliEnv,
 	}, nil
 }
 
@@ -143,6 +158,7 @@ func main() {
 		Target:        args.target,
 		Tag:           args.tag,
 		Args:          args.buildArgs,
+		EnvVars:       args.envVars,
 	}, client)
 	if err != nil {
 		log.Fatalf("Failed to probe build metadata %+v", err)
