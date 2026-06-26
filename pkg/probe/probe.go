@@ -42,6 +42,8 @@ type ProbeOpts struct {
 	Target string
 	// Build args
 	Args map[string]string
+	// Environment variables passed to the build
+	EnvVars map[string]string
 }
 
 // ErrParseContainerfile is returned when the Containerfile cannot be parsed.
@@ -69,8 +71,9 @@ func Probe(opts ProbeOpts, client storageclient.Client) (BuildMetadata, error) {
 	cf, err := containerfile.Parse(
 		opts.Containerfile,
 		containerfile.BuildOptions{
-			Args:   opts.Args,
-			Target: opts.Target,
+			Args:    opts.Args,
+			EnvVars: opts.EnvVars,
+			Target:  opts.Target,
 		},
 	)
 	if err != nil {

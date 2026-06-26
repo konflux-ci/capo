@@ -1,4 +1,6 @@
-package buildargs
+// Package buildvars provides functions for parsing build arguments environment
+// variables passed to the build.
+package buildvars
 
 import (
 	"bufio"
@@ -12,29 +14,29 @@ import (
 // ErrInvalidBuildArg is returned when a build argument line is not in KEY=VALUE format.
 var ErrInvalidBuildArg = errors.New("invalid build arg")
 
-// ReadBuildArg parses a build argument and writes it into args, matching
+// ReadBuildVariable parses a build argument or env variable and writes it into args, matching
 // buildah semantics: KEY=VALUE stores the literal value (even if empty),
 // bare KEY inherits from the host environment (or deletes the key if unset).
-func ReadBuildArg(arg string, args map[string]string) error {
-	key, value, hasValue, err := parseBuildArgLine(arg)
+func ReadBuildVariable(variable string, vars map[string]string) error {
+	key, value, hasValue, err := parseBuildVarLine(variable)
 	if err != nil {
 		return err
 	}
 	if hasValue {
-		args[key] = value
+		vars[key] = value
 	} else if val, ok := os.LookupEnv(key); ok {
-		args[key] = val
+		vars[key] = val
 	} else {
-		delete(args, key)
+		delete(vars, key)
 	}
 	return nil
 }
 
-// parseBuildArgLine parses a single build argument string.
+// parseBuildVarLine parses a single build argument string.
 // It accepts both KEY=VALUE (explicit value) and KEY (no equals, inherit from
 // environment). The hasValue return indicates whether an explicit value was
 // provided: true for KEY= or KEY=VALUE, false for bare KEY.
-func parseBuildArgLine(s string) (key string, value string, hasValue bool, err error) {
+func parseBuildVarLine(s string) (key string, value string, hasValue bool, err error) {
 	k, v, ok := strings.Cut(s, "=")
 	if k == "" {
 		return "", "", false, fmt.Errorf("%w: empty key in %q", ErrInvalidBuildArg, s)
@@ -66,7 +68,7 @@ func ParseBuildArgFile(path string) (result map[string]string, err error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if err := ReadBuildArg(line, args); err != nil {
+		if err := ReadBuildVariable(line, args); err != nil {
 			return nil, fmt.Errorf("in %s: %w", path, err)
 		}
 	}
