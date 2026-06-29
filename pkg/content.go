@@ -33,6 +33,8 @@ var ErrMissingStageLabel = errors.New("[ERR_MISSING_STAGE_LABEL] intermediate im
 // specified stage from buildah storage for later syft scanning.
 // Uses buildah stage labels (io.buildah.stage.name) to identify the
 // intermediate image for the given stage alias.
+// If the intermediateContentPath is empty, only builder/external content will
+// be saved.
 func (s *Scanner) getContent(
 	pullspec string,
 	stageAlias string,
@@ -55,18 +57,20 @@ func (s *Scanner) getContent(
 		}
 	}
 
-	// Special bases will have builderImage set as nil
-	intermediate, err := s.getIntermediateContent(
-		builderImage,
-		stageAlias,
-		sources,
-		intermediateContentPath,
-	)
+	if intermediateContentPath != "" {
+		// Special bases will have builderImage set as nil
+		intermediate, err := s.getIntermediateContent(
+			builderImage,
+			stageAlias,
+			sources,
+			intermediateContentPath,
+		)
 
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
+		s.logContent("intermediate", intermediate, pullspec)
 	}
-	s.logContent("intermediate", intermediate, pullspec)
 
 	if !isSpecialBase {
 		// Only standard bases have builder content. All content in special bases is treated as intermediate.
@@ -86,32 +90,6 @@ func (s *Scanner) logContent(kind string, content []string, pullspec string) {
 	} else {
 		s.logger.Debug("included content", "kind", kind, "content", content, "pullspec", pullspec)
 	}
-}
-
-// getExternalContent extracts content from an external image (COPY --from=image:tag).
-// External images have no intermediate layer — only the image content is extracted.
-func (s *Scanner) getExternalContent(
-	pullspec string,
-	sources []string,
-	contentPath string,
-) error {
-	imgID, err := s.store.Lookup(storageclient.StripTransport(pullspec))
-	if err != nil {
-		return fmt.Errorf("could not find external image %q in buildah storage: %w", pullspec, ErrImageNotFound)
-	}
-
-	img, err := s.store.Image(imgID)
-	if err != nil {
-		return fmt.Errorf("could not find external image %q in buildah storage: %w", pullspec, ErrImageNotFound)
-	}
-
-	content, err := s.getImageContent(img, sources, contentPath)
-	if err != nil {
-		return err
-	}
-
-	s.logContent("external", content, pullspec)
-	return nil
 }
 
 // getDescendantContent extracts intermediate content for a chained stage (node)
