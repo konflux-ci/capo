@@ -18,13 +18,13 @@ import (
 	"go.podman.io/storage/pkg/reexec"
 )
 
-// BuilderPackageSourceRoot represents a non-chained builder stage or the root of a
-// chain of stages that share the same external base image. Chained stages
-// (FROM parent-alias AS child-alias) are attached as descendants.
-type BuilderPackageSourceRoot struct {
-	// Index of this builder stage.
+// packageSource represents a root package source — either a builder stage
+// (with optional chained descendants) or an external image (COPY --from=image:tag).
+// External roots have external=true, no alias, index 0, and nil descendants.
+type packageSource struct {
+	// Index of this builder stage. Zero for external sources.
 	index int
-	// Stage alias.
+	// Stage alias. Empty for external sources.
 	alias string
 	// Base image pullspec as it appeared in the containerfile.
 	pullspec string
@@ -33,12 +33,15 @@ type BuilderPackageSourceRoot struct {
 	// Paths to content that should be syft-scanned.
 	sources []string
 	// Chained stages that use this stage (or its descendants) as base.
-	descendants []*BuilderPackageSourceNode
+	// Always nil for external sources.
+	descendants []*packageSourceDescendant
+	// True if this root represents an external image source, not a builder stage.
+	external bool
 }
 
-// BuilderPackageSourceNode represents a chained builder stage - a descendant of a
-// BuilderPackageSourceRoot or another BuilderPackageSourceNode.
-type BuilderPackageSourceNode struct {
+// packageSourceDescendant represents a chained builder stage - a descendant of a
+// packageSource or another packageSourceDescendant.
+type packageSourceDescendant struct {
 	// Index of this builder stage.
 	index int
 	// Stage alias.
@@ -46,18 +49,7 @@ type BuilderPackageSourceNode struct {
 	// Paths to content that should be syft-scanned.
 	sources []string
 	// Further chained stages.
-	descendants []*BuilderPackageSourceNode
-}
-
-// ExternalPackageSource is used for external image sources (COPY --from=image:tag)
-// that are not builder stages.
-type ExternalPackageSource struct {
-	// Base image pullspec as it appeared in the COPY --from=pullspec instruction.
-	pullspec string
-	// Base image pullspec with resolved digest.
-	digestBase string
-	// Paths to content that should be syft-scanned.
-	sources []string
+	descendants []*packageSourceDescendant
 }
 
 type PackageMetadata struct {
@@ -179,25 +171,17 @@ func (s *Scanner) Scan(
 		return PackageMetadata{}, err
 	}
 
-	roots, externals, err := getPackageSources(s.sclient, cf, digests)
+	packageSources, err := getPackageSources(s.sclient, cf, digests)
 	if err != nil {
 		return PackageMetadata{}, err
 	}
 
-	for _, root := range roots {
-		rootPkgItems, err := s.scanBuilderStageTree(root)
+	for _, source := range packageSources {
+		items, err := s.scanBuilderStageTree(source)
 		if err != nil {
-			return PackageMetadata{}, fmt.Errorf("failed to scan tree for stage %q: %w", root.alias, err)
+			return PackageMetadata{}, fmt.Errorf("failed to scan source %q: %w", source.pullspec, err)
 		}
-		res.Packages = append(res.Packages, rootPkgItems...)
-	}
-
-	for _, ext := range externals {
-		extPkgItems, err := s.scanExternalSource(ext)
-		if err != nil {
-			return PackageMetadata{}, fmt.Errorf("failed to scan external source %+v: %w", ext, err)
-		}
-		res.Packages = append(res.Packages, extPkgItems...)
+		res.Packages = append(res.Packages, items...)
 	}
 
 	return res, nil
@@ -268,16 +252,16 @@ func attachDigest(pullspec string, dig digest.Digest) (string, error) {
 }
 
 // getPackageSources traces content origins from the final stage through builder
-// stages and returns a tree of BuilderPackageSourceRoot (one per non-chained builder
-// stage) with chained stages attached as BuilderPackageSourceNode descendants.
-// External COPY --from sources are returned separately.
+// stages and returns a slice of packageSource — one per non-chained builder
+// stage (with chained stages attached as packageSourceDescendant descendants)
+// and one per external COPY --from source (with external=true).
 // Uses the passed storageclient.Client to get OCIImageConfigs of base images
 // to get their default workdirs for relative path resolution in copy destinations.
 func getPackageSources(
 	storageClient storageclient.Client,
 	cf containerfile.Containerfile,
 	digests map[string]digest.Digest,
-) ([]BuilderPackageSourceRoot, []ExternalPackageSource, error) {
+) ([]packageSource, error) {
 	// mapping of bases used in the containerfile to their initial working
 	// directories
 	baseToWorkdir := make(map[string]string)
@@ -288,7 +272,7 @@ func getPackageSources(
 
 		cfg, err := storageClient.GetImageConfig(s.Base)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to get OCI image config for %q: %w", s.Base, ErrOCIConfig)
+			return nil, fmt.Errorf("failed to get OCI image config for %q: %w", s.Base, ErrOCIConfig)
 		}
 
 		baseToWorkdir[s.Base] = cfg.Config.Workdir
@@ -316,13 +300,11 @@ func getPackageSources(
 		}
 	}
 
-	roots, err := buildSourceTrees(cf, builderStageAcc, digests)
+	packageSources, err := buildSourceTrees(cf, builderStageAcc, digests)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	// construct external package sources
-	externals := make([]ExternalPackageSource, 0)
 	for pullspec, sources := range externalAcc {
 		dig, exists := digests[pullspec]
 		var digestBase string
@@ -330,31 +312,32 @@ func getPackageSources(
 			var err error
 			digestBase, err = attachDigest(storageclient.StripTransport(pullspec), dig)
 			if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 		} else {
 			digestBase = pullspec
 		}
 
-		externals = append(externals, ExternalPackageSource{
+		packageSources = append(packageSources, packageSource{
 			pullspec:   pullspec,
 			digestBase: digestBase,
 			sources:    sources,
+			external:   true,
 		})
 	}
 
-	return roots, externals, nil
+	return packageSources, nil
 }
 
-// buildSourceTree constructs trees of BuilderPackageSourceRoot (non-chained stages)
-// with BuilderPackageSourceNode descendants (chained stages) from the traced sources.
+// buildSourceTrees constructs trees of packageSource (non-chained stages)
+// with packageSourceDescendant descendants (chained stages) from the traced sources.
 func buildSourceTrees(
 	cf containerfile.Containerfile,
 	builderStageAcc map[int][]string,
 	digests map[string]digest.Digest,
-) ([]BuilderPackageSourceRoot, error) {
-	rootByIndex := make(map[int]*BuilderPackageSourceRoot)
-	nodeByIndex := make(map[int]*BuilderPackageSourceNode)
+) ([]packageSource, error) {
+	sourceByIndex := make(map[int]*packageSource)
+	nodeByIndex := make(map[int]*packageSourceDescendant)
 
 	for _, builderStage := range cf.BuilderStages() {
 		isChained := builderStage.Base != builderStage.BaseRef
@@ -373,16 +356,16 @@ func buildSourceTrees(
 				digestBase = builderStage.Base
 			}
 
-			root := &BuilderPackageSourceRoot{
+			source := &packageSource{
 				index:      builderStage.Index,
 				alias:      builderStage.Alias,
 				pullspec:   builderStage.Base,
 				digestBase: digestBase,
 				sources:    sources,
 			}
-			rootByIndex[builderStage.Index] = root
+			sourceByIndex[builderStage.Index] = source
 		} else {
-			node := &BuilderPackageSourceNode{
+			node := &packageSourceDescendant{
 				index:   builderStage.Index,
 				alias:   builderStage.Alias,
 				sources: sources,
@@ -392,7 +375,7 @@ func buildSourceTrees(
 			// attach to parent — parent can be a root or another node
 			parentStage := cf.StageByRef(builderStage.BaseRef)
 
-			if parentRoot, ok := rootByIndex[parentStage.Index]; ok {
+			if parentRoot, ok := sourceByIndex[parentStage.Index]; ok {
 				parentRoot.descendants = append(parentRoot.descendants, node)
 			} else if parentNode, ok := nodeByIndex[parentStage.Index]; ok {
 				parentNode.descendants = append(parentNode.descendants, node)
@@ -400,12 +383,12 @@ func buildSourceTrees(
 		}
 	}
 
-	roots := make([]BuilderPackageSourceRoot, 0, len(rootByIndex))
-	for _, root := range rootByIndex {
-		roots = append(roots, *root)
+	sources := make([]packageSource, 0, len(sourceByIndex))
+	for _, source := range sourceByIndex {
+		sources = append(sources, *source)
 	}
 
-	return roots, nil
+	return sources, nil
 }
 
 // traceSource recursively traces a source path through builder stage COPY
@@ -500,17 +483,17 @@ func resolveRelativeDestination(cp containerfile.Copy, baseWorkdir string) strin
 	return filepath.Join(baseWorkdir, cp.Workdir, cp.Destination)
 }
 
-// scanBuilderStageTree scans a BuilderPackageSourceRoot and all its descendants. For the root,
-// both builder base content and intermediate content are extracted. For
-// descendants, only intermediate content is extracted (diffed against parent's
+// scanBuilderStageTree scans a packageSource and all its descendants.
+// For the root, both builder base content and intermediate content are extracted.
+// For descendants, only intermediate content is extracted (diffed against parent's
 // intermediate layer, or builder base if parent has no intermediate).
 func (s *Scanner) scanBuilderStageTree(
-	root BuilderPackageSourceRoot,
+	root packageSource,
 ) ([]PackageMetadataItem, error) {
 	res := make([]PackageMetadataItem, 0)
 
 	// root scan
-	rootItems, err := s.scanSource(root.pullspec, root.alias, root.digestBase, root.sources)
+	rootItems, err := s.scanSource(root)
 	if err != nil {
 		return nil, err
 	}
@@ -559,7 +542,7 @@ func (s *Scanner) scanBuilderStageTree(
 // only intermediate content (diffed against diffBase - the nearest ancestor's
 // intermediate image or the builder base image).
 func (s *Scanner) scanDescendants(
-	node *BuilderPackageSourceNode,
+	node *packageSourceDescendant,
 	diffBase *storage.Image,
 	rootDigestBase string,
 ) ([]PackageMetadataItem, error) {
@@ -615,68 +598,30 @@ func (s *Scanner) scanDescendants(
 	return res, nil
 }
 
-// scanExternalSource scans content from an external image (COPY --from=image:tag).
-// External images have no intermediate layer - only the image content is extracted
-// and reported with origin_type "external".
-func (s *Scanner) scanExternalSource(
-	ext ExternalPackageSource,
-) (_ []PackageMetadataItem, err error) {
-	contentPath, err := os.MkdirTemp("", "")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp directory: %w: %w", err, ErrIO)
-	}
-
-	debugMode := os.Getenv("CAPO_DEBUG") != ""
-	if debugMode {
-		s.logger.Debug("external content path", "pullspec", ext.pullspec, "path", contentPath)
-	} else {
-		defer func() {
-			removeErr := os.RemoveAll(contentPath)
-			if err == nil {
-				err = removeErr
-			}
-		}()
-	}
-
-	err = s.getExternalContent(ext.pullspec, ext.sources, contentPath)
-	if err != nil {
-		return nil, err
-	}
-
-	pkgs, err := sbom.SyftScan(contentPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan external content: %w: %w", err, ErrSBOMScan)
-	}
-
-	return getPackageMetadata("", ext.digestBase, "external", pkgs, nil), nil
-}
-
 // scanSource extracts content for a stage from buildah storage, scans it
 // with syft, and returns package metadata items.
 func (s *Scanner) scanSource(
-	pullspec string,
-	stageAlias string,
-	digestBase string,
-	sources []string,
+	root packageSource,
 ) (_ []PackageMetadataItem, err error) {
-	// builder content is content that is present in a builder stage base image
 	builderContentPath, err := os.MkdirTemp("", "")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp directory: %w: %w", err, ErrIO)
 	}
 
-	// intermediate content is content that created in a builder stage base during the build
-	intermediateContentPath, err := os.MkdirTemp("", "")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp directory: %w: %w", err, ErrIO)
+	originType := "external"
+	var intermediateContentPath string
+	if !root.external {
+		originType = "builder"
+		intermediateContentPath, err = os.MkdirTemp("", "")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp directory: %w: %w", err, ErrIO)
+		}
 	}
 
-	// if in debug mode, print the paths to saved content
-	// and don't remove the temporary directories
 	debugMode := os.Getenv("CAPO_DEBUG") != ""
 	if debugMode {
-		s.logger.Debug("builder content path", "pullspec", pullspec, "path", builderContentPath)
-		s.logger.Debug("intermediate content path", "pullspec", pullspec, "path", intermediateContentPath)
+		s.logger.Debug("builder content path", "pullspec", root.pullspec, "path", builderContentPath)
+		s.logger.Debug("intermediate content path", "pullspec", root.pullspec, "path", intermediateContentPath)
 	} else {
 		defer func() {
 			removeErr := errors.Join(
@@ -689,14 +634,17 @@ func (s *Scanner) scanSource(
 		}()
 	}
 
-	err = s.getContent(pullspec, stageAlias, sources, builderContentPath, intermediateContentPath)
+	err = s.getContent(root.pullspec, root.alias, root.sources, builderContentPath, intermediateContentPath)
 	if err != nil {
 		return nil, err
 	}
 
-	intermediatePkgs, err := sbom.SyftScan(intermediateContentPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan intermediate content: %w: %w", err, ErrSBOMScan)
+	var intermediatePkgs []sbom.SyftPackage
+	if intermediateContentPath != "" {
+		intermediatePkgs, err = sbom.SyftScan(intermediateContentPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan intermediate content: %w: %w", err, ErrSBOMScan)
+		}
 	}
 
 	builderPkgs, err := sbom.SyftScan(builderContentPath)
@@ -705,7 +653,7 @@ func (s *Scanner) scanSource(
 	}
 
 	return getPackageMetadata(
-		stageAlias, digestBase, "builder", builderPkgs, intermediatePkgs,
+		root.alias, root.digestBase, originType, builderPkgs, intermediatePkgs,
 	), nil
 }
 
