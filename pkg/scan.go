@@ -52,6 +52,7 @@ type packageSourceDescendant struct {
 	descendants []*packageSourceDescendant
 }
 
+
 type PackageMetadata struct {
 	Packages []PackageMetadataItem `json:"packages"`
 }
@@ -175,6 +176,7 @@ func (s *Scanner) Scan(
 	if err != nil {
 		return PackageMetadata{}, err
 	}
+	s.logPackageSources(packageSources)
 
 	for _, source := range packageSources {
 		items, err := s.scanBuilderStageTree(source)
@@ -194,7 +196,6 @@ func getImageDigests(
 	storageClient storageclient.Client, cf containerfile.Containerfile,
 ) (map[string]digest.Digest, error) {
 	res := make(map[string]digest.Digest)
-
 
 	for _, stage := range cf.BuilderStages() {
 		// This deduplication check covers both duplicate pullspecs across
@@ -483,6 +484,44 @@ func resolveRelativeDestination(cp containerfile.Copy, baseWorkdir string) strin
 	return filepath.Join(baseWorkdir, cp.Workdir, cp.Destination)
 }
 
+func (s *Scanner) logPackageSources(roots []packageSource) {
+	for _, root := range roots {
+		if root.external {
+			s.logger.Debug("package source: external image",
+				"pullspec", root.pullspec,
+				"digestBase", root.digestBase,
+				"sources", root.sources,
+			)
+		} else {
+			s.logger.Debug("package source: builder stage",
+				"index", root.index,
+				"alias", root.alias,
+				"pullspec", root.pullspec,
+				"digestBase", root.digestBase,
+				"sources", root.sources,
+				"descendants", len(root.descendants),
+			)
+			for _, desc := range root.descendants {
+				s.logPackageSourceDescendant(desc, root.alias, 1)
+			}
+		}
+	}
+}
+
+func (s *Scanner) logPackageSourceDescendant(node *packageSourceDescendant, parentAlias string, depth int) {
+	s.logger.Debug("package source: descendant stage",
+		"depth", depth,
+		"index", node.index,
+		"alias", node.alias,
+		"parent", parentAlias,
+		"sources", node.sources,
+		"descendants", len(node.descendants),
+	)
+	for _, child := range node.descendants {
+		s.logPackageSourceDescendant(child, node.alias, depth+1)
+	}
+}
+
 // scanBuilderStageTree scans a packageSource and all its descendants.
 // For the root, both builder base content and intermediate content are extracted.
 // For descendants, only intermediate content is extracted (diffed against parent's
@@ -490,6 +529,8 @@ func resolveRelativeDestination(cp containerfile.Copy, baseWorkdir string) strin
 func (s *Scanner) scanBuilderStageTree(
 	root packageSource,
 ) ([]PackageMetadataItem, error) {
+	s.logger.Debug("starting root scan", "base", root.digestBase, "pullspec", root.pullspec)
+	defer s.logger.Debug("ending root scan", "base", root.digestBase, "pullspec", root.pullspec)
 	res := make([]PackageMetadataItem, 0)
 
 	// root scan
@@ -546,6 +587,8 @@ func (s *Scanner) scanDescendants(
 	diffBase *storage.Image,
 	rootDigestBase string,
 ) ([]PackageMetadataItem, error) {
+	s.logger.Debug("starting descendant scan", "alias", node.alias)
+	defer s.logger.Debug("ending descendant scan", "alias", node.alias)
 	res := make([]PackageMetadataItem, 0)
 
 	intermediateContentPath, err := os.MkdirTemp("", "")
