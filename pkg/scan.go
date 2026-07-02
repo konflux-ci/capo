@@ -606,6 +606,13 @@ func (s *Scanner) scanDescendants(
 		return nil, err
 	}
 
+	if n, sizeErr := dirSize(intermediateContentPath); sizeErr != nil {
+		s.logger.Warn("failed to calculate content disk usage",
+			"kind", "intermediate (chained)", "alias", node.alias, "error", sizeErr)
+	} else {
+		s.logger.Debug("content disk usage", "kind", "intermediate (chained)", "alias", node.alias, "size", formatSize(n))
+	}
+
 	if len(intermediate) > 0 {
 		s.logContent("intermediate (chained)", intermediate, node.alias)
 
@@ -680,6 +687,21 @@ func (s *Scanner) scanSource(
 	err = s.getContent(root.pullspec, root.alias, root.sources, builderContentPath, intermediateContentPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if n, sizeErr := dirSize(builderContentPath); sizeErr != nil {
+		s.logger.Warn("failed to calculate content disk usage",
+			"kind", originType, "pullspec", root.pullspec, "error", sizeErr)
+	} else {
+		s.logger.Debug("content disk usage", "kind", originType, "pullspec", root.pullspec, "size", formatSize(n))
+	}
+	if intermediateContentPath != "" {
+		if n, sizeErr := dirSize(intermediateContentPath); sizeErr != nil {
+			s.logger.Warn("failed to calculate content disk usage",
+				"kind", "intermediate", "pullspec", root.pullspec, "error", sizeErr)
+		} else {
+			s.logger.Debug("content disk usage", "kind", "intermediate", "pullspec", root.pullspec, "size", formatSize(n))
+		}
 	}
 
 	var intermediatePkgs []sbom.SyftPackage

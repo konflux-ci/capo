@@ -466,3 +466,40 @@ func checkBuildahVersionFromImage(labels map[string]string) error {
 
 	return nil
 }
+
+func dirSize(path string) (int64, error) {
+	var size int64
+	err := filepath.WalkDir(path, func(_ string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return fmt.Errorf("failed to stat entry: %w", err)
+		}
+		size += info.Size()
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("failed to walk directory %q: %w", path, err)
+	}
+	return size, nil
+}
+
+func formatSize(bytes int64) string {
+	const (
+		kb = 1024
+		mb = 1024 * kb
+		gb = 1024 * mb
+	)
+	switch {
+	case bytes >= gb:
+		return fmt.Sprintf("%.1fGB", float64(bytes)/float64(gb))
+	case bytes >= mb:
+		return fmt.Sprintf("%.1fMB", float64(bytes)/float64(mb))
+	case bytes >= kb:
+		return fmt.Sprintf("%.1fKB", float64(bytes)/float64(kb))
+	default:
+		return fmt.Sprintf("%dB", bytes)
+	}
+}
