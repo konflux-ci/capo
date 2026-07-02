@@ -97,6 +97,7 @@ func IntegrationTest() error {
 		"unshare",
 		"go",
 		"test",
+		"-v",
 		"-count=1", // disable test caching
 		"-tags=integration,exclude_graphdriver_btrfs",
 		"./pkg",

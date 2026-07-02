@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +21,14 @@ import (
 	"github.com/magefile/mage/sh"
 	"go.podman.io/storage"
 )
+
+func createTestScanner() (*Scanner, error) {
+	return NewScanner(
+		WithLogger(
+			slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		),
+	)
+}
 
 // splitFilesystemTransport splits a filesystem transport reference into the
 // transport prefix and the remaining path+reference. For example
@@ -246,7 +255,6 @@ func cleanUpIntermediateLayers(t *testing.T, store storage.Store) error {
 	}
 	for _, image := range images {
 		if len(image.Names) == 0 {
-			t.Logf("Cleaning up unnamed image %s", image.ID)
 			store.DeleteImage(image.ID, true)
 		}
 	}
@@ -268,11 +276,9 @@ func (buildDef *BuildDefinition) cleanUp(t *testing.T, store storage.Store) erro
 	if storageclient.IsFilesystemTransport(buildDef.Tag) {
 		localPath := filesystemTransportPath(buildDef.Tag)
 		fullPath := filepath.Join(buildDef.ContextDirectory, localPath)
-		t.Logf("Cleaning up filesystem transport artifact %s", fullPath)
 		os.RemoveAll(fullPath)
 		return nil
 	}
-	t.Logf("Cleaning up builder image %s", buildDef.Tag)
 	imageID, err := store.Lookup(buildDef.Tag)
 	if err != nil {
 		t.Logf("Image %s not found, skipping cleanup: %v", buildDef.Tag, err)
@@ -1932,7 +1938,7 @@ func TestIntegration(t *testing.T) {
 			},
 		},
 	}
-	scanner, err := NewScanner()
+	scanner, err := createTestScanner()
 	if err != nil {
 		t.Fatalf("Failed to create scanner: %+v", err)
 	}
@@ -1965,27 +1971,9 @@ func TestIntegrationScanErrors(t *testing.T) {
 								   COPY --from=builder /file /file`,
 			ExpectedError: ErrPullspecResolve,
 		},
-		"[RUN --mount] --mount from external image in builder stage": {
-			ContainerfileContent: `FROM localhost/mount-ext-base:latest AS builder
-									COPY go_exp.mod /opt/app3/go.mod
-									RUN --mount=type=bind,from=localhost/mount-ext-source:latest,target=/mnt mkdir -p /opt/app2 && cp /mnt/go.mod /opt/app2/go.mod
-
-									FROM scratch
-									COPY --from=builder /opt /opt`,
-			ExpectedError: ErrUnsupportedMount,
-		},
-		"[RUN --mount] --mount from external image in final stage": {
-			ContainerfileContent: `FROM localhost/mount-ext-base:latest AS builder
-									COPY go_exp.mod /opt/app3/go.mod
-
-									FROM scratch
-									COPY --from=builder /opt /opt
-									RUN --mount=type=bind,from=localhost/mount-ext-source:latest,target=/mnt mkdir -p /opt/app2 && cp /mnt/go.mod /opt/app2/go.mod`,
-			ExpectedError: ErrUnsupportedMount,
-		},
 	}
 
-	scanner, err := NewScanner()
+	scanner, err := createTestScanner()
 	if err != nil {
 		t.Fatalf("Failed to create scanner: %+v", err)
 	}

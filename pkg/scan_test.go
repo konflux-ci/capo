@@ -39,8 +39,7 @@ func TestGetPackageSources(t *testing.T) {
 		cf                containerfile.Containerfile
 		digests           map[string]digest.Digest
 		configs           map[string]storageclient.OCIImageConfig
-		expectedRoots     []BuilderPackageSourceRoot
-		expectedExternals []ExternalPackageSource
+		expectedRoots []packageSource
 	}{
 		"only external copy in final": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -63,12 +62,12 @@ func TestGetPackageSources(t *testing.T) {
 				"docker.io/library/fedora:latest": testDigest("abc123"),
 			},
 			configs:       map[string]storageclient.OCIImageConfig{},
-			expectedRoots: []BuilderPackageSourceRoot{},
-			expectedExternals: []ExternalPackageSource{
+			expectedRoots: []packageSource{
 				{
 					pullspec:   "docker.io/library/fedora:latest",
 					digestBase: "docker.io/library/fedora@" + string(testDigest("abc123")),
 					sources:    []string{"/usr/bin/oras"},
+					external:   true,
 				},
 			},
 		},
@@ -117,7 +116,7 @@ func TestGetPackageSources(t *testing.T) {
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 				"docker.io/alpine/helm:latest":    configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder1",
@@ -133,7 +132,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{"/usr/bin/helm"},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"recursive multi-stage file copy": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -181,7 +179,7 @@ func TestGetPackageSources(t *testing.T) {
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 				"docker.io/alpine/helm:latest":    configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder1",
@@ -197,7 +195,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"recursive multi-stage file copy - mixed sources": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -245,7 +242,7 @@ func TestGetPackageSources(t *testing.T) {
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 				"docker.io/alpine/helm:latest":    configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder1",
@@ -261,7 +258,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{"/usr/bin/helm"},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"multi-stage directory copy": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -315,7 +311,7 @@ func TestGetPackageSources(t *testing.T) {
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 				"docker.io/alpine/helm:latest":    configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder1",
@@ -331,7 +327,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{"/app/"},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"ignore non-copied content": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -379,7 +374,7 @@ func TestGetPackageSources(t *testing.T) {
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 				"docker.io/alpine/helm:latest":    configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder1",
@@ -395,7 +390,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{"/app/"},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"complex multi-stage with multiple final copies": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -455,7 +449,7 @@ func TestGetPackageSources(t *testing.T) {
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 				"docker.io/alpine/helm:latest":    configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder1",
@@ -471,7 +465,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{"/tools/", "/usr/bin/helm"},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"wildcard copy in final stage": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -502,7 +495,7 @@ func TestGetPackageSources(t *testing.T) {
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder",
@@ -511,7 +504,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{"/lib/*.so"},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"wildcard traced through multiple stages": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -557,7 +549,7 @@ func TestGetPackageSources(t *testing.T) {
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 				"docker.io/alpine/helm:latest":    configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder1",
@@ -573,7 +565,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{"/libs/*.so"},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"mixed wildcards and regular files": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -604,7 +595,7 @@ func TestGetPackageSources(t *testing.T) {
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder",
@@ -613,7 +604,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{"/usr/bin/helm", "/lib/*.so", "/etc/config.txt"},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"relative destination resolution": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -676,7 +666,7 @@ func TestGetPackageSources(t *testing.T) {
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 				"docker.io/library/node:latest":   configWithWorkdir("/var/data"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder1",
@@ -692,7 +682,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"mixed destinations with workdir variants": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -783,7 +772,7 @@ func TestGetPackageSources(t *testing.T) {
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 				"docker.io/library/alpine:latest": configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder1",
@@ -799,7 +788,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"multi-stage tracing with workdir in intermediate stage": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -864,7 +852,7 @@ func TestGetPackageSources(t *testing.T) {
 				"docker.io/library/alpine:latest": configWithWorkdir("/"),
 				"docker.io/library/ubuntu:latest": configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder1",
@@ -887,7 +875,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"different stages with different base image workdirs": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -966,7 +953,7 @@ func TestGetPackageSources(t *testing.T) {
 				"registry.example.com/go-runtime:v1": configWithWorkdir("/app"),
 				"registry.example.com/nginx:v1":      configWithWorkdir("/usr/share/nginx/html"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "go-builder",
@@ -996,7 +983,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"numeric index COPY --from in final stage with aliased stages": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -1028,7 +1014,7 @@ func TestGetPackageSources(t *testing.T) {
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder",
@@ -1037,7 +1023,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{"/usr/bin/app"},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"numeric index COPY --from in builder stage with aliased stages": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -1085,7 +1070,7 @@ func TestGetPackageSources(t *testing.T) {
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 				"docker.io/alpine/helm:latest":    configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder1",
@@ -1101,7 +1086,6 @@ func TestGetPackageSources(t *testing.T) {
 					sources:    []string{},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"chained stages - parent and child cascade": {
 			// FROM fedora AS parent    (non-chained, index 0)
@@ -1143,14 +1127,14 @@ func TestGetPackageSources(t *testing.T) {
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "parent",
 					pullspec:   "docker.io/library/fedora:latest",
 					digestBase: "docker.io/library/fedora@" + string(testDigest("aa1111")),
 					sources:    []string{"/app/bin"},
-					descendants: []*BuilderPackageSourceNode{
+					descendants: []*packageSourceDescendant{
 						{
 							index:   1,
 							alias:   "child",
@@ -1159,7 +1143,6 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"chained stages - empty child skipped": {
 			// FROM fedora AS parent        (non-chained, index 0)
@@ -1201,14 +1184,14 @@ func TestGetPackageSources(t *testing.T) {
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "parent",
 					pullspec:   "docker.io/library/fedora:latest",
 					digestBase: "docker.io/library/fedora@" + string(testDigest("bb2222")),
 					sources:    []string{"/usr/bin/tool"},
-					descendants: []*BuilderPackageSourceNode{
+					descendants: []*packageSourceDescendant{
 						{
 							index:   1,
 							alias:   "empty-child",
@@ -1217,7 +1200,6 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"chained stages - diamond dependency": {
 			// FROM fedora AS shared   (non-chained, index 0)
@@ -1273,14 +1255,14 @@ func TestGetPackageSources(t *testing.T) {
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "shared",
 					pullspec:   "docker.io/library/fedora:latest",
 					digestBase: "docker.io/library/fedora@" + string(testDigest("cc3333")),
 					sources:    []string{"/left/bin", "/right/bin"},
-					descendants: []*BuilderPackageSourceNode{
+					descendants: []*packageSourceDescendant{
 						{
 							index:   1,
 							alias:   "left",
@@ -1294,7 +1276,6 @@ func TestGetPackageSources(t *testing.T) {
 					},
 				},
 			},
-			expectedExternals: []ExternalPackageSource{},
 		},
 		"external COPY --from in builder stage": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -1334,7 +1315,7 @@ func TestGetPackageSources(t *testing.T) {
 			configs: map[string]storageclient.OCIImageConfig{
 				"docker.io/library/fedora:latest": configWithWorkdir("/"),
 			},
-			expectedRoots: []BuilderPackageSourceRoot{
+			expectedRoots: []packageSource{
 				{
 					index:      0,
 					alias:      "builder",
@@ -1342,12 +1323,11 @@ func TestGetPackageSources(t *testing.T) {
 					digestBase: "docker.io/library/fedora@" + string(testDigest("eee111")),
 					sources:    []string{"/app/"},
 				},
-			},
-			expectedExternals: []ExternalPackageSource{
 				{
 					pullspec:   "docker.io/library/external:latest",
 					digestBase: "docker.io/library/external@" + string(testDigest("fff222")),
 					sources:    []string{"/ext/bin"},
+					external:   true,
 				},
 			},
 		},
@@ -1361,28 +1341,24 @@ func TestGetPackageSources(t *testing.T) {
 				test.digests, test.configs,
 			)
 
-			roots, externals, err := getPackageSources(client, test.cf, test.digests)
+			roots, err := getPackageSources(client, test.cf, test.digests)
 			if err != nil {
 				t.Fatalf("getPackageSources returned error: %v", err)
 			}
 
-			rootDiff := cmp.Diff(
+			diff := cmp.Diff(
 				test.expectedRoots, roots,
-				cmp.AllowUnexported(BuilderPackageSourceRoot{}, BuilderPackageSourceNode{}),
-				cmpopts.SortSlices(func(a, b BuilderPackageSourceRoot) bool { return a.index < b.index }),
+				cmp.AllowUnexported(packageSource{}, packageSourceDescendant{}),
+				cmpopts.SortSlices(func(a, b packageSource) bool {
+					if a.external != b.external {
+						return !a.external
+					}
+					return a.index < b.index
+				}),
 				cmpopts.EquateEmpty(),
 			)
-			if rootDiff != "" {
-				t.Errorf("getPackageSources() roots mismatch (-want +got):\n%s", rootDiff)
-			}
-
-			externalDiff := cmp.Diff(
-				test.expectedExternals, externals,
-				cmp.AllowUnexported(ExternalPackageSource{}),
-				cmpopts.EquateEmpty(),
-			)
-			if externalDiff != "" {
-				t.Errorf("getPackageSources() externals mismatch (-want +got):\n%s", externalDiff)
+			if diff != "" {
+				t.Errorf("getPackageSources() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -1420,20 +1396,6 @@ func TestResolveRelativeDestination(t *testing.T) {
 				t.Errorf("resolveRelativeDestination() = %q, want %q", got, test.expected)
 			}
 		})
-	}
-}
-
-func TestDuplicateAliasIsRejected(t *testing.T) {
-	t.Parallel()
-	stages := []containerfile.Stage{
-		{Alias: "builder", Base: "quay.io/rhel:9", BaseRef: "quay.io/rhel:9", Index: 0},
-		{Alias: "builder", Base: "quay.io/fedora:42", BaseRef: "quay.io/fedora:42", Index: 1},
-		{Alias: containerfile.FinalStage, Base: "scratch", BaseRef: "scratch", Index: -1},
-	}
-
-	err := checkUnsupportedFeatures(stages)
-	if !errors.Is(err, ErrDuplicateAlias) {
-		t.Fatalf("expected ErrDuplicateAlias, got: %v", err)
 	}
 }
 
@@ -1475,12 +1437,147 @@ func TestGetPackageSourcesError(t *testing.T) {
 				test.digests, test.configs,
 			)
 
-			_, _, err := getPackageSources(client, test.cf, test.digests)
+			_, err := getPackageSources(client, test.cf, test.digests)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
 			if !errors.Is(err, test.expectedErr) {
 				t.Fatalf("expected error wrapping %v, got: %v", test.expectedErr, err)
+			}
+		})
+	}
+}
+
+func TestScanPreflightErrors(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		cf         containerfile.Containerfile
+		expectErrs []error
+		rejectErrs []error
+	}{
+		"builder alias used as final base": {
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/golang:1.22",
+					BaseRef: "docker.io/library/golang:1.22",
+					Index:   0,
+				},
+				{
+					Alias:   containerfile.FinalStage,
+					Base:    "builder",
+					BaseRef: "builder",
+					Index:   -1,
+				},
+			}},
+			expectErrs: []error{ErrUnsupportedFeature, ErrBuilderIsFinalBase},
+			rejectErrs: []error{ErrDuplicateAlias, ErrMountTypeBind},
+		},
+		"builder referenced by numeric index as final base": {
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/golang:1.22",
+					BaseRef: "docker.io/library/golang:1.22",
+					Index:   0,
+				},
+				{
+					Alias:   containerfile.FinalStage,
+					Base:    "0",
+					BaseRef: "0",
+					Index:   -1,
+				},
+			}},
+			expectErrs: []error{ErrUnsupportedFeature, ErrBuilderIsFinalBase},
+			rejectErrs: []error{ErrDuplicateAlias, ErrMountTypeBind},
+		},
+		"duplicate stage alias": {
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/golang:1.22",
+					BaseRef: "docker.io/library/golang:1.22",
+					Index:   0,
+				},
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/node:20",
+					BaseRef: "docker.io/library/node:20",
+					Index:   1,
+				},
+				{
+					Alias:   containerfile.FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
+				},
+			}},
+			expectErrs: []error{ErrUnsupportedFeature, ErrDuplicateAlias},
+			rejectErrs: []error{ErrBuilderIsFinalBase, ErrMountTypeBind},
+		},
+		"bind mount with from": {
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/golang:1.22",
+					BaseRef: "docker.io/library/golang:1.22",
+					Index:   0,
+					Mounts: []containerfile.Mount{
+						{MountType: containerfile.MountTypeBind, FromRaw: "docker.io/library/some-image:latest"},
+					},
+				},
+				{
+					Alias:   containerfile.FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
+				},
+			}},
+			expectErrs: []error{ErrUnsupportedFeature, ErrMountTypeBind},
+			rejectErrs: []error{ErrBuilderIsFinalBase, ErrDuplicateAlias},
+		},
+		"multiple preflight errors": {
+			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/golang:1.22",
+					BaseRef: "docker.io/library/golang:1.22",
+					Index:   0,
+				},
+				{
+					Alias:   "builder",
+					Base:    "docker.io/library/node:20",
+					BaseRef: "docker.io/library/node:20",
+					Index:   1,
+				},
+				{
+					Alias:   containerfile.FinalStage,
+					Base:    "builder",
+					BaseRef: "builder",
+					Index:   -1,
+				},
+			}},
+			expectErrs: []error{ErrUnsupportedFeature, ErrBuilderIsFinalBase, ErrDuplicateAlias},
+			rejectErrs: []error{ErrMountTypeBind},
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := &Scanner{}
+			_, err := s.Scan(tc.cf)
+
+			for _, expected := range tc.expectErrs {
+				if !errors.Is(err, expected) {
+					t.Errorf("expected error wrapping %v, got: %v", expected, err)
+				}
+			}
+
+			for _, rejected := range tc.rejectErrs {
+				if errors.Is(err, rejected) {
+					t.Errorf("unexpected error %v in: %v", rejected, err)
+				}
 			}
 		})
 	}
