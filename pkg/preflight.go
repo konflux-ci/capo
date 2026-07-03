@@ -47,7 +47,7 @@ func checkBuilderIsFinalBase(cf containerfile.Containerfile) error {
 	final := cf.Stages[len(cf.Stages)-1]
 
 	for i, stage := range cf.BuilderStages() {
-		if final.Base == stage.Alias || final.Base == strconv.Itoa(i) {
+		if final.BaseRef == stage.Alias || final.BaseRef == strconv.Itoa(i) {
 			return fmt.Errorf(
 				"builder stage %q is used as base image of the final stage: %w", stage.Alias, ErrBuilderIsFinalBase,
 			)
