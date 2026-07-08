@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/konflux-ci/capo/pkg/buildvars"
 	"github.com/konflux-ci/capo/pkg/probe"
@@ -41,9 +42,12 @@ type args struct {
 	envVars map[string]string
 	// Target stage of the buildah build
 	target string
+	// Named build contexts passed to the build
+	buildContexts map[string]string
 }
 
 var ErrBuildArg = errors.New("invalid build args syntax")
+var ErrBuildContext = errors.New("invalid build context syntax, expected name=value")
 var ErrBuildEnv = errors.New("invalid build env syntax")
 var ErrNoContainerfile = errors.New("containerfile argument is required")
 var ErrNoTag = errors.New("tag argument is required")
@@ -86,6 +90,20 @@ func parseArgs() (args, error) {
 			return nil
 		},
 	)
+	buildContexts := make(map[string]string)
+	flag.Func(
+		"build-context",
+		"Named build context in the form name=value. Can be used multiple times.",
+		func(s string) error {
+			name, value, ok := strings.Cut(s, "=")
+			if !ok || name == "" {
+				return ErrBuildContext
+			}
+			buildContexts[name] = value
+			return nil
+		},
+	)
+
 	target := flag.String(
 		"target",
 		"",
@@ -127,6 +145,7 @@ func parseArgs() (args, error) {
 		target:            *target,
 		buildArgs:         buildArgs,
 		envVars:           cliEnv,
+		buildContexts:     buildContexts,
 	}, nil
 }
 
@@ -159,6 +178,7 @@ func main() {
 		Tag:           args.tag,
 		Args:          args.buildArgs,
 		EnvVars:       args.envVars,
+		BuildContexts: args.buildContexts,
 	}, client)
 	if err != nil {
 		log.Fatalf("Failed to probe build metadata %+v", err)
