@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime/debug"
+	"strings"
 
 	"github.com/konflux-ci/capo/pkg"
 	"github.com/konflux-ci/capo/pkg/buildvars"
@@ -25,9 +26,12 @@ type args struct {
 	envVars map[string]string
 	// Target stage of the buildah build
 	target string
+	// Named build contexts passed to the build
+	buildContexts map[string]string
 }
 
 var ErrBuildArg = errors.New("invalid build args syntax")
+var ErrBuildContext = errors.New("invalid build context syntax, expected name=value")
 var ErrEnvVar = errors.New("invalid environment variable syntax")
 var ErrNoContainerfile = errors.New("containerfile argument is required")
 var ErrJSONEncode = errors.New("error while encoding package metadata")
@@ -59,6 +63,20 @@ func parseArgs() (args, error) {
 			if err := buildvars.ReadBuildVariable(s, buildEnvVars); err != nil {
 				return ErrEnvVar
 			}
+			return nil
+		},
+	)
+
+	buildContexts := make(map[string]string)
+	flag.Func(
+		"build-context",
+		"Named build context in the form name=value. Can be used multiple times.",
+		func(s string) error {
+			name, value, ok := strings.Cut(s, "=")
+			if !ok || name == "" {
+				return ErrBuildContext
+			}
+			buildContexts[name] = value
 			return nil
 		},
 	)
@@ -95,6 +113,7 @@ func parseArgs() (args, error) {
 		target:            *target,
 		buildArgs:         buildArgs,
 		envVars:           buildEnvVars,
+		buildContexts:     buildContexts,
 	}, nil
 }
 
@@ -102,9 +121,10 @@ func parseArgs() (args, error) {
 // These are used in the containerfile parser.
 func buildOptsFromArgs(args args) containerfile.BuildOptions {
 	return containerfile.BuildOptions{
-		Args:    args.buildArgs,
-		EnvVars: args.envVars,
-		Target:  args.target,
+		Args:          args.buildArgs,
+		EnvVars:       args.envVars,
+		Target:        args.target,
+		BuildContexts: args.buildContexts,
 	}
 }
 

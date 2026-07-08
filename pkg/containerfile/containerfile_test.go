@@ -1014,6 +1014,51 @@ label test"`,
 				},
 			}},
 		},
+		"COPY from named contexts": {
+			containerfile: `FROM scratch
+							COPY --from=reldir /usr/bin/binary /usr/bin/binary
+							COPY --from=https /usr/bin/binary /usr/bin/binary
+							COPY --from=image /usr/bin/binary /usr/bin/binary`,
+			buildOptions: BuildOptions{
+				Args: map[string]string{
+					"FEDORA_TAG": "latest",
+				},
+				BuildContexts: map[string]string{
+					"reldir": "../dir",
+					"https": "https://example.org/releases/src.tar",
+					"image": "container-image://alpine:3.15",
+				},
+			},
+			expected: Containerfile{Stages: []Stage{
+				{
+					Alias:   FinalStage,
+					Base:    "scratch",
+					BaseRef: "scratch",
+					Index:   -1,
+					Copies: []Copy{
+						{
+							From:        "reldir",
+							Sources:     []string{"/usr/bin/binary"},
+							Destination: "/usr/bin/binary",
+							Type:        CopyTypeContext,
+						},
+						{
+							From:        "https",
+							Sources:     []string{"/usr/bin/binary"},
+							Destination: "/usr/bin/binary",
+							Type:        CopyTypeContext,
+						},
+						{
+							From:        "image",
+							Sources:     []string{"/usr/bin/binary"},
+							Destination: "/usr/bin/binary",
+							Type:        CopyTypeContext,
+						},
+					},
+					Mounts: []Mount{},
+				},
+			}},
+		},
 	}
 
 	for name, test := range tests {

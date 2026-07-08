@@ -29,6 +29,8 @@ const (
 	CopyTypeBuilder CopyType = iota
 	// CopyTypeExternal indicates a COPY directly from an external image.
 	CopyTypeExternal
+	// CopyTypeContext indicates a COPY from a named context.
+	CopyTypeContext
 )
 
 // A builder-type COPY command in a Containerfile stage.
@@ -157,6 +159,9 @@ type BuildOptions struct {
 
 	// Target stage of the buildah build
 	Target string
+
+	// Build contexts passed to the build.
+	BuildContexts map[string]string
 }
 
 // ErrTargetNotFound is returned when the target stage specified in
@@ -233,7 +238,8 @@ func Parse(reader io.Reader, opts BuildOptions) (Containerfile, error) {
 		}
 		aliasToBase[alias] = base
 
-		stage, err := parseStage(s, alias, base, baseRef, stageIndex, stageNames, opts.EnvVars)
+		contextNames := slices.Collect(maps.Keys(opts.BuildContexts))
+		stage, err := parseStage(s, alias, base, baseRef, stageIndex, stageNames, opts.EnvVars, contextNames)
 		if err != nil {
 			return Containerfile{Stages: res}, err
 		}
@@ -286,6 +292,7 @@ func parseStage(
 	index int,
 	stageNames []string,
 	envVars map[string]string,
+	contextNames []string,
 ) (Stage, error) {
 	copies := make([]Copy, 0)
 	mounts := make([]Mount, 0)
@@ -314,7 +321,7 @@ func parseStage(
 			}
 
 		case "copy":
-			cp, err := parseCopy(child, workdir, env, stageNames)
+			cp, err := parseCopy(child, workdir, env, stageNames, contextNames)
 			if err != nil {
 				return Stage{}, err
 			}
@@ -474,13 +481,11 @@ func normalizeSources(sources []string, env []string) ([]string, error) {
 // Uses the passed env to evaluate arguments in the COPY.
 // Uses the passed previous stage names to evaluate whether this COPY command is from
 // a builder stage or directly from an external image.
-func parseCopy(node *parser.Node, workdir string, env []string, stageNames []string) (*Copy, error) {
+// Uses the passed build context names to determine if the COPY command is
+// copying from a named build context.
+func parseCopy(node *parser.Node, workdir string, env []string,
+	stageNames []string, contextNames []string) (*Copy, error) {
 	for _, fl := range node.Flags {
-		// TODO: When the "--from" flag is included, this is a COPY either from a builder stage,
-		// an external image or a named context. We assume that named contexts aren't used,
-		// as they're not supported in any current Konflux buildah tasks. To resolve this in
-		// the future, we might have to include a --build-context argument to capo (to use the same
-		// syntax as "buildah bud") and skip the copies that copy from these contexts.
 		if !strings.HasPrefix(fl, "--from=") {
 			continue
 		}
@@ -508,9 +513,13 @@ func parseCopy(node *parser.Node, workdir string, env []string, stageNames []str
 			return nil, fmt.Errorf("%w: %w", ErrParse, err)
 		}
 
-		cpType := CopyTypeBuilder
-		if !isStageRef(from, stageNames) {
-			cpType = CopyTypeExternal
+		// Determine if copying from a builder stage, an external image, or a
+		// named context
+		cpType := CopyTypeExternal
+		if slices.Contains(contextNames, from) {
+			cpType = CopyTypeContext
+		} else if isStageRef(from, stageNames) {
+			cpType = CopyTypeBuilder
 		}
 
 		return &Copy{

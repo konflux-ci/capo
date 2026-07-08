@@ -63,6 +63,9 @@ type BuildDefinition struct {
 	// ContextDirectory is the build context path relative to pkg/
 	// (e.g. "../testdata/image_content").
 	ContextDirectory string
+	// Build contexts to pass to the build. Values representing local directory
+	// paths are relative to pkg/
+	BuildContexts map[string]string
 }
 
 // TestCase describes a single integration test: build images, scan, compare results.
@@ -117,7 +120,12 @@ func (testCase *TestCase) run(t *testing.T, scanner *Scanner, buildahBinary stri
 		return err
 	}
 
-	cf, err := containerfile.Parse(strings.NewReader(testCase.TestImage.ContainerfileContent), containerfile.BuildOptions{})
+	cf, err := containerfile.Parse(
+		strings.NewReader(testCase.TestImage.ContainerfileContent),
+		containerfile.BuildOptions{
+			BuildContexts: testCase.TestImage.BuildContexts,
+		},
+	)
 	if err != nil {
 		return err
 	}
@@ -230,6 +238,12 @@ func (buildDef *BuildDefinition) runBuildah(buildahBinary, tag string, saveStage
 	if saveStages {
 		args = append(args, "--save-stages", "--stage-labels")
 	}
+	if buildDef.BuildContexts != nil {
+		for k, v := range buildDef.BuildContexts {
+			args = append(args, "--build-context", fmt.Sprintf("%s=%s", k, v))
+		}
+	}
+
 	args = append(args, buildDef.ContextDirectory)
 
 	var buf bytes.Buffer
@@ -1936,6 +1950,17 @@ func TestIntegration(t *testing.T) {
 					},
 				},
 			},
+		},
+		"copying from named build context does not fail": {
+			TestImage: BuildDefinition{
+				ContainerfileContent: `	FROM scratch
+										COPY --from=named go2.mod go2.mod`,
+				ContextDirectory: "../testdata/image_content",
+				BuildContexts: map[string]string {
+					"named": "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{Packages: []PackageMetadataItem{}},
 		},
 	}
 	scanner, err := createTestScanner()

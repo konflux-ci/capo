@@ -218,17 +218,15 @@ func getImageDigests(
 
 	for _, stage := range cf.Stages {
 		for _, cp := range stage.Copies {
-			if cp.Type == containerfile.CopyTypeBuilder {
-				continue
-			}
+			if cp.Type == containerfile.CopyTypeExternal {
+				if _, ok := res[cp.From]; !ok {
+					dig, err := storageClient.ResolveDigest(cp.From)
+					if err != nil {
+						return res, fmt.Errorf("failed to resolve pullspec %q: %w: %w", cp.From, err, ErrPullspecResolve)
+					}
 
-			if _, ok := res[cp.From]; !ok {
-				dig, err := storageClient.ResolveDigest(cp.From)
-				if err != nil {
-					return res, fmt.Errorf("failed to resolve pullspec %q: %w: %w", cp.From, err, ErrPullspecResolve)
+					res[cp.From] = dig
 				}
-
-				res[cp.From] = dig
 			}
 		}
 	}
@@ -288,6 +286,11 @@ func getPackageSources(
 	externalAcc := make(map[string][]string)
 
 	for _, cp := range final.Copies {
+		// TODO: resolving from named contexts is currently not supported
+		if cp.Type == containerfile.CopyTypeContext {
+			continue
+		}
+
 		for _, source := range cp.Sources {
 			// the copy is builder type only if there's no builder stage with alias equal to the cp.from
 			// otherwise the cp.from is a pullspec and it is an external copy
