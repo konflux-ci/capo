@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"os"
+	"log/slog"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -1565,7 +1567,11 @@ func TestScanPreflightErrors(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			s := &Scanner{}
+			s, _ := NewScanner(
+				WithLogger(
+					slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})),
+				),
+			)
 			_, err := s.Scan(tc.cf)
 
 			for _, expected := range tc.expectErrs {
