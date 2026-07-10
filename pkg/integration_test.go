@@ -260,6 +260,37 @@ func normalizePullspec(pullspec string) string {
 	return pullspec
 }
 
+// buildDigestOnlyImage builds a builder image and renames it to a digest-only
+// reference, simulating how buildah stores images pulled from a registry by
+// digest.
+// Returns the digest-only reference (e.g. "localhost/name@sha256:...").
+func buildDigestOnlyImage(t *testing.T, def BuildDefinition, store storage.Store, buildahBinary string) string {
+	t.Helper()
+	if err := def.buildImage(store, buildahBinary, true); err != nil {
+		t.Fatalf("buildDigestOnlyImage: build failed: %v", err)
+	}
+	imgID, err := store.Lookup(def.Tag)
+	if err != nil {
+		t.Fatalf("buildDigestOnlyImage: lookup failed: %v", err)
+	}
+	img, err := store.Image(imgID)
+	if err != nil {
+		t.Fatalf("buildDigestOnlyImage: get image failed: %v", err)
+	}
+	// This avoids splitting on the port colon in "localhost:5000/name:tag".
+	repo := def.Tag
+	if idx := strings.LastIndex(repo, ":"); idx > strings.LastIndex(repo, "/") {
+		repo = repo[:idx]
+	}
+	digestRef := repo + "@" + img.Digest.String()
+	// Simulate buildah: images pulled with tag+digest are stored under digest-only name
+	if err := store.SetNames(imgID, []string{digestRef}); err != nil {
+		t.Fatalf("buildDigestOnlyImage: SetNames failed: %v", err)
+	}
+	t.Cleanup(func() { def := BuildDefinition{Tag: digestRef}; def.cleanUp(t, store) })
+	return digestRef
+}
+
 // cleanUpIntermediateLayers deletes all images without names/tags from the store.
 // This technically cleans more than just intermediate layers, but it shouldn't matter.
 func cleanUpIntermediateLayers(t *testing.T, store storage.Store) error {
@@ -1956,7 +1987,7 @@ func TestIntegration(t *testing.T) {
 				ContainerfileContent: `	FROM scratch
 										COPY --from=named go2.mod go2.mod`,
 				ContextDirectory: "../testdata/image_content",
-				BuildContexts: map[string]string {
+				BuildContexts: map[string]string{
 					"named": "../testdata/image_content",
 				},
 			},
@@ -1981,6 +2012,120 @@ func TestIntegration(t *testing.T) {
 			}
 		})
 	}
+
+}
+
+// TestIntegrationDigestLookup verifies that capo can resolve and scan builder
+// images stored under digest-only names (as buildah does after pulling with a
+// tag+digest ref).
+func TestIntegrationDigestLookup(t *testing.T) {
+	scanner, err := createTestScanner()
+	if err != nil {
+		t.Fatalf("Failed to create scanner: %+v", err)
+	}
+	buildahBinary := getBuildahBinary(t)
+
+	t.Run("Builder base image referenced by digest only", func(t *testing.T) {
+		digestRef := buildDigestOnlyImage(t, BuildDefinition{
+			Tag:                  "localhost/capo-digest-test-builder:latest",
+			ContainerfileContent: "FROM scratch\nCOPY go_syft.mod /opt/go.mod",
+			ContextDirectory:     "../testdata/image_content",
+		}, scanner.store, buildahBinary)
+
+		tc := TestCase{
+			TestImage: BuildDefinition{
+				ContainerfileContent: fmt.Sprintf(`FROM %s as builder
+FROM scratch
+COPY --from=builder /opt/go.mod /opt/go.mod`, digestRef),
+				ContextDirectory: "../testdata/image_content",
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
+						OriginType: "builder",
+						Pullspec:   "localhost/capo-digest-test-builder@sha256:dummy",
+						StageAlias: "builder",
+					},
+				},
+			},
+		}
+		normalizeTestCaseTags(&tc)
+		if err := tc.run(t, scanner, buildahBinary); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("Builder base image referenced by tag+digest", func(t *testing.T) {
+		builderTag := "localhost/capo-tagdigest-test-builder:v1"
+		digestRef := buildDigestOnlyImage(t, BuildDefinition{
+			Tag:                  builderTag,
+			ContainerfileContent: "FROM scratch\nCOPY go_syft.mod /opt/go.mod",
+			ContextDirectory:     "../testdata/image_content",
+		}, scanner.store, buildahBinary)
+
+		// Reconstruct the tag+digest pullspec from the stored digest-only ref.
+		_, digestSuffix, _ := strings.Cut(digestRef, "@")
+		tagDigestRef := builderTag + "@" + digestSuffix
+
+		tc := TestCase{
+			TestImage: BuildDefinition{
+				ContainerfileContent: fmt.Sprintf(`FROM %s as builder
+FROM scratch
+COPY --from=builder /opt/go.mod /opt/go.mod`, tagDigestRef),
+				ContextDirectory: "../testdata/image_content",
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
+						OriginType: "builder",
+						Pullspec:   "localhost/capo-tagdigest-test-builder@sha256:dummy",
+						StageAlias: "builder",
+					},
+				},
+			},
+		}
+		normalizeTestCaseTags(&tc)
+		if err := tc.run(t, scanner, buildahBinary); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("Builder base image referenced by tag+digest with port", func(t *testing.T) {
+		builderTag := "localhost:5000/capo-port-test-builder:v1"
+		digestRef := buildDigestOnlyImage(t, BuildDefinition{
+			Tag:                  builderTag,
+			ContainerfileContent: "FROM scratch\nCOPY go_syft.mod /opt/go.mod",
+			ContextDirectory:     "../testdata/image_content",
+		}, scanner.store, buildahBinary)
+
+		_, digestSuffix, _ := strings.Cut(digestRef, "@")
+		tagDigestRef := builderTag + "@" + digestSuffix
+
+		tc := TestCase{
+			TestImage: BuildDefinition{
+				ContainerfileContent: fmt.Sprintf(`FROM %s as builder
+FROM scratch
+COPY --from=builder /opt/go.mod /opt/go.mod`, tagDigestRef),
+				ContextDirectory: "../testdata/image_content",
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
+						OriginType: "builder",
+						Pullspec:   "localhost:5000/capo-port-test-builder@sha256:dummy",
+						StageAlias: "builder",
+					},
+				},
+			},
+		}
+		normalizeTestCaseTags(&tc)
+		if err := tc.run(t, scanner, buildahBinary); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 type ErrorTestCase struct {

@@ -552,7 +552,10 @@ func (s *Scanner) scanBuilderStageTree(
 		// to its builder base image.
 		imgId, err := s.store.Lookup(storageclient.StripTransport(root.pullspec))
 		if err != nil {
-			return nil, fmt.Errorf("could not find image %q in buildah storage: %w", root.pullspec, ErrImageNotFound)
+			imgId, err = s.store.Lookup(storageclient.StripTransport(root.digestBase))
+			if err != nil {
+				return nil, fmt.Errorf("could not find image %q in buildah storage: %w", root.pullspec, ErrImageNotFound)
+			}
 		}
 		builderBaseImage, err := s.store.Image(imgId)
 		if err != nil {
@@ -690,7 +693,10 @@ func (s *Scanner) scanSource(
 		}()
 	}
 
-	err = s.getContent(root.pullspec, root.alias, root.sources, builderContentPath, intermediateContentPath)
+	err = s.getContent(
+		root.pullspec, root.digestBase, root.alias, root.sources,
+		builderContentPath, intermediateContentPath,
+	)
 	if err != nil {
 		return nil, err
 	}

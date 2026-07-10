@@ -37,6 +37,7 @@ var ErrMissingStageLabel = errors.New("[ERR_MISSING_STAGE_LABEL] intermediate im
 // be saved.
 func (s *Scanner) getContent(
 	pullspec string,
+	digestBase string,
 	stageAlias string,
 	sources []string,
 	builderContentPath string,
@@ -49,7 +50,10 @@ func (s *Scanner) getContent(
 		// Special bases are not pullable or resolvable with Lookup
 		imgId, err := s.store.Lookup(storageclient.StripTransport(pullspec))
 		if err != nil {
-			return fmt.Errorf("could not find image %q in buildah storage: %w", pullspec, ErrImageNotFound)
+			imgId, err = s.store.Lookup(storageclient.StripTransport(digestBase))
+			if err != nil {
+				return fmt.Errorf("could not find image %q in buildah storage: %w", pullspec, ErrImageNotFound)
+			}
 		}
 		builderImage, err = s.store.Image(imgId)
 		if err != nil {
