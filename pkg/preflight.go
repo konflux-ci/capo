@@ -6,7 +6,6 @@ package capo
 import (
 	"errors"
 	"fmt"
-	"strconv"
 
 	"github.com/konflux-ci/capo/pkg/containerfile"
 )
@@ -14,7 +13,6 @@ import (
 var ErrUnsupportedFeature = errors.New(
 	"[ERR_UNSUPPORTED_FEATURES] some features of the containerfile are not supported for builder-content resolution",
 )
-var ErrBuilderIsFinalBase = errors.New("[ERR_BUILDER_FINAL_BASE] builder stage used as final base")
 var ErrMountTypeBind = errors.New("[ERR_MOUNT_TYPE_BIND] RUN --mount with bind type in containerfile")
 
 // ErrDuplicateAlias is returned when two stages in a Containerfile share
@@ -26,7 +24,6 @@ var ErrDuplicateAlias = errors.New("[ERR_DUPLICATE_ALIAS] duplicate stage alias"
 // Check containerfile for unsupported features for builder content resolution.
 func preflightCheck(cf containerfile.Containerfile) error {
 	joined := errors.Join(
-		checkBuilderIsFinalBase(cf),
 		checkDuplicateAlias(cf),
 		checkRunMountTypeBind(cf),
 	)
@@ -35,26 +32,6 @@ func preflightCheck(cf containerfile.Containerfile) error {
 	}
 
 	return fmt.Errorf("%w: %w", ErrUnsupportedFeature, joined)
-}
-
-// Check if any builder stage alias is used in the final stage as the base
-// image.
-func checkBuilderIsFinalBase(cf containerfile.Containerfile) error {
-	if len(cf.Stages) < 2 {
-		return nil
-	}
-
-	final := cf.Stages[len(cf.Stages)-1]
-
-	for _, stage := range cf.BuilderStages() {
-		if final.BaseRef == stage.Alias || final.BaseRef == strconv.Itoa(stage.Index) {
-			return fmt.Errorf(
-				"builder stage %q is used as base image of the final stage: %w", stage.Alias, ErrBuilderIsFinalBase,
-			)
-		}
-	}
-
-	return nil
 }
 
 // Check if the containerfile contains two stages with duplicate aliases.
