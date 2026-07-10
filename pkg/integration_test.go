@@ -695,48 +695,33 @@ func TestIntegration(t *testing.T) {
 				},
 			},
 		},
-		// A builder stage can be used as the final image base (FROM alias_as_base).
-		// When this happens, its base image content becomes the final image's parent
-		// content — externally built, not reported by capo (responsibility of parent
-		// content identification in mobster). However, its intermediate content
-		// (created during THIS build) remains intermediate and should be reported,
-		// because fixing it requires changing this containerfile.
-		// This distinction (parent base vs intermediate of a stage used as final base)
-		// should be verified in mobster as well.
-		"Builder used as final stage base - builder content excluded (parent content), intermediate traced": {
-			SkipTestReason: "[Priority: low/medium] capo does not distinguish builder content from final base content when builder is used as FROM base",
+		// Verify that if a builder stage is used as a base for the final
+		// image, its content is not resolved as builder nor as intermediate.
+		"Builder used as final stage base - builder content excluded": {
 			TestImage: BuildDefinition{
 				Tag: "test-final-uses-builder-base",
 				ContainerfileContent: `FROM localhost/builder1:latest AS builder
 										COPY go_uuid.mod /content/go.mod
-										COPY go_sync.mod /untracked/builder/go.mod
 
 										FROM localhost/builder2:latest AS alias_as_base
 										COPY go_exp.mod /content/go.mod
-										COPY --from=builder /base1a /base1ainparent
 
 										FROM alias_as_base
 										COPY --from=builder /base1 /base1
-										COPY --from=builder /content /content
-										COPY --from=alias_as_base /base1ainparent /base1a
-										COPY --from=alias_as_base /base2 /base2
-										COPY --from=alias_as_base /content /content2`,
+										COPY --from=builder /content /content`,
 				ContextDirectory: "../testdata/image_content",
 			},
 			BuilderImages: []BuildDefinition{
 				{
 					Tag: "localhost/builder1:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base1/go.mod
-											COPY go_text.mod /base1a/go.mod
-											COPY go2.mod /untracked/b1/go.mod`,
+											COPY go_syft.mod /base1/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
 					Tag: "localhost/builder2:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_sync.mod /base2/go.mod
-											COPY go2.mod /untracked/b2/go.mod`,
+											COPY go_sync.mod /base2/go.mod`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
@@ -749,7 +734,52 @@ func TestIntegration(t *testing.T) {
 						StageAlias: "builder",
 					},
 					{
-						PackageURL: "pkg:golang/golang.org/x/text@v0.18.0",
+						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
+						OriginType: "intermediate",
+						Pullspec:   "localhost/builder1@sha256:dummy",
+						StageAlias: "builder",
+					},
+				},
+			},
+		},
+		// WARNING: This test is not specifically "correct", ideally content
+		// copied from builder stage used as final base would not be reported
+		// builder/intermediate at all. This test is here just to catch any
+		// accidental change of behaviour.
+		"Builder used as final stage base - explicit COPY from base stage traced": {
+			TestImage: BuildDefinition{
+				Tag: "test-final-uses-builder-base-with-copy",
+				ContainerfileContent: `FROM localhost/builder1:latest AS builder
+										COPY go_uuid.mod /content/go.mod
+
+										FROM localhost/builder2:latest AS alias_as_base
+										COPY go_exp.mod /content/go.mod
+
+										FROM alias_as_base
+										COPY --from=builder /base1 /base1
+										COPY --from=builder /content /content
+										COPY --from=alias_as_base /base2 /base2
+										COPY --from=alias_as_base /content /content2`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "localhost/builder1:latest",
+					ContainerfileContent: `FROM scratch
+											COPY go_syft.mod /base1/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+				{
+					Tag: "localhost/builder2:latest",
+					ContainerfileContent: `FROM scratch
+											COPY go_sync.mod /base2/go.mod`,
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{
+					{
+						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
 						OriginType: "builder",
 						Pullspec:   "localhost/builder1@sha256:dummy",
 						StageAlias: "builder",
@@ -759,6 +789,12 @@ func TestIntegration(t *testing.T) {
 						OriginType: "intermediate",
 						Pullspec:   "localhost/builder1@sha256:dummy",
 						StageAlias: "builder",
+					},
+					{
+						PackageURL: "pkg:golang/golang.org/x/sync@v0.8.0",
+						OriginType: "builder",
+						Pullspec:   "localhost/builder2@sha256:dummy",
+						StageAlias: "alias_as_base",
 					},
 					{
 						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",

@@ -1457,42 +1457,6 @@ func TestScanPreflightErrors(t *testing.T) {
 		expectErrs []error
 		rejectErrs []error
 	}{
-		"builder alias used as final base": {
-			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
-				{
-					Alias:   "builder",
-					Base:    "docker.io/library/golang:1.22",
-					BaseRef: "docker.io/library/golang:1.22",
-					Index:   0,
-				},
-				{
-					Alias:   containerfile.FinalStage,
-					Base:    "builder",
-					BaseRef: "builder",
-					Index:   -1,
-				},
-			}},
-			expectErrs: []error{ErrUnsupportedFeature, ErrBuilderIsFinalBase},
-			rejectErrs: []error{ErrDuplicateAlias, ErrMountTypeBind},
-		},
-		"builder referenced by numeric index as final base": {
-			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
-				{
-					Alias:   "builder",
-					Base:    "docker.io/library/golang:1.22",
-					BaseRef: "docker.io/library/golang:1.22",
-					Index:   0,
-				},
-				{
-					Alias:   containerfile.FinalStage,
-					Base:    "0",
-					BaseRef: "0",
-					Index:   -1,
-				},
-			}},
-			expectErrs: []error{ErrUnsupportedFeature, ErrBuilderIsFinalBase},
-			rejectErrs: []error{ErrDuplicateAlias, ErrMountTypeBind},
-		},
 		"duplicate stage alias": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
 				{
@@ -1515,7 +1479,7 @@ func TestScanPreflightErrors(t *testing.T) {
 				},
 			}},
 			expectErrs: []error{ErrUnsupportedFeature, ErrDuplicateAlias},
-			rejectErrs: []error{ErrBuilderIsFinalBase, ErrMountTypeBind},
+			rejectErrs: []error{ErrMountTypeBind},
 		},
 		"bind mount with from": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -1536,7 +1500,7 @@ func TestScanPreflightErrors(t *testing.T) {
 				},
 			}},
 			expectErrs: []error{ErrUnsupportedFeature, ErrMountTypeBind},
-			rejectErrs: []error{ErrBuilderIsFinalBase, ErrDuplicateAlias},
+			rejectErrs: []error{ErrDuplicateAlias},
 		},
 		"multiple preflight errors": {
 			cf: containerfile.Containerfile{Stages: []containerfile.Stage{
@@ -1559,7 +1523,7 @@ func TestScanPreflightErrors(t *testing.T) {
 					Index:   -1,
 				},
 			}},
-			expectErrs: []error{ErrUnsupportedFeature, ErrBuilderIsFinalBase, ErrDuplicateAlias},
+			expectErrs: []error{ErrUnsupportedFeature, ErrDuplicateAlias},
 			rejectErrs: []error{ErrMountTypeBind},
 		},
 	}
