@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/opencontainers/go-digest"
+	"go.podman.io/image/v5/docker/reference"
 	"go.podman.io/storage"
 	"go.podman.io/storage/pkg/reexec"
 )
@@ -127,17 +128,73 @@ func NewBuildahClient(store storage.Store) Client {
 	}
 }
 
+// LookupImage looks up an image in the store by ref (tag or digest), with
+// a fallback for tag+digest references (name:tag@sha256:...).
+//
+// Background: when buildah pulls a FROM image referenced by tag+digest
+// (name:tag@sha256:...), libimage strips the tag (Docker-spec compatibility)
+// and stores the image under the digest-only name — see
+// https://github.com/containers/buildah/blob/v1.44.0/new.go#L164 and
+// https://github.com/containers/common/blob/a5ccdae8/libimage/pull.go#L118.
+// Stripping the tag when both tag and digest are present is an established
+// Docker convention ("the digest is the sole source of truth") — see
+// https://github.com/containers/common/blob/a5ccdae8/libimage/normalize.go#L103.
+//
+// If the direct lookup fails, tag+digest form is assumed, stripTagFromDigestedRef
+// attempts to strip the tag and the lookup is retried with the digest-only form.
+//
+// Techdebt: short names without a registry prefix (e.g. "FROM alpine") are
+// not resolved — store.Lookup fails and ParseNamed rejects them as
+// non-canonical, so no fallback is applied. Proper fix:
+// use go.podman.io/image/v5/pkg/shortnames.ResolveLocally
+// to read the registries.conf that was active during the preceding buildah build.
+func (c *BuildahClient) lookupImage(ref string) (string, error) {
+	stripped := StripTransport(ref)
+	id, err := c.store.Lookup(stripped)
+	if err != nil {
+		normalized, normErr := stripTagFromDigestedRef(stripped)
+		if normErr != nil {
+			return "", normErr
+		}
+		if normalized != "" {
+			id, err = c.store.Lookup(normalized)
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("looking up %q in storage: %w", ref, err)
+	}
+	return id, nil
+}
+func stripTagFromDigestedRef(ref string) (string, error) {
+	named, err := reference.ParseNamed(ref)
+	if err != nil {
+		return "", nil // reference is not canonical
+	}
+	digested, ok := named.(reference.Digested)
+	if !ok {
+		return "", nil
+	}
+	digestOnly, err := reference.WithDigest(reference.TrimNamed(named), digested.Digest())
+	if err != nil {
+		return "", fmt.Errorf("attaching digest to %q: %w", ref, err)
+	}
+	if digestOnly.String() == ref {
+		return "", nil
+	}
+	return digestOnly.String(), nil
+}
+
 // ResolveDigest looks up the given pullspec in the local storage and returns
 // its content digest in the form "sha256:<hex>". Transport prefixes (e.g.
 // "docker://") are stripped before the lookup. The reference can be the
 // image's name or ID.
 func (c *BuildahClient) ResolveDigest(ref string) (digest.Digest, error) {
-	id, err := c.store.Lookup(StripTransport(ref))
+	imgId, err := c.lookupImage(ref)
 	if err != nil {
 		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, ref, err)
 	}
 
-	img, err := c.store.Image(id)
+	img, err := c.store.Image(imgId)
 	if err != nil {
 		return "", fmt.Errorf("%w %q: %w", ErrPullspecResolve, ref, err)
 	}
@@ -148,7 +205,7 @@ func (c *BuildahClient) ResolveDigest(ref string) (digest.Digest, error) {
 // Get an OCIImageConfig struct for the passed pullspec via buildah's container
 // storage. The reference can be the image's name or ID.
 func (c *BuildahClient) GetImageConfig(ref string) (OCIImageConfig, error) {
-	imgId, err := c.store.Lookup(StripTransport(ref))
+	imgId, err := c.lookupImage(ref)
 	if err != nil {
 		return OCIImageConfig{}, fmt.Errorf("%w %s: %w", ErrOCIImageConfig, ref, err)
 	}
