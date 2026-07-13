@@ -7,6 +7,8 @@ import (
 
 	"github.com/anchore/syft/syft"
 	"github.com/anchore/syft/syft/artifact"
+	"github.com/anchore/syft/syft/cataloging"
+	"github.com/anchore/syft/syft/cataloging/pkgcataloging"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/sbom"
 	"github.com/anchore/syft/syft/source/sourceproviders"
@@ -15,7 +17,10 @@ import (
 
 var sourceConfig = syft.DefaultGetSourceConfig().WithSources(sourceproviders.DirTag)
 
-var createSBOMConfig = syft.DefaultCreateSBOMConfig()
+var createSBOMConfig = syft.DefaultCreateSBOMConfig().
+	WithCatalogerSelection(
+		cataloging.NewSelectionRequest().WithDefaults(pkgcataloging.ImageTag),
+	)
 
 type SyftPackage struct {
 	PURL             string
