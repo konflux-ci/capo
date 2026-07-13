@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
+	"os/exec"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -21,6 +23,56 @@ import (
 	"github.com/magefile/mage/sh"
 	"go.podman.io/storage"
 )
+
+func TestMain(m *testing.M) {
+	err := prepareBinaries()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to prepare binaries: %v\n", err)
+		os.Exit(1)
+	}
+
+	os.Exit(m.Run())
+}
+
+// Walk the testdata/binaries to find go binaries to build. Builds each binary
+// with "go build" and copies the built executables into testdata/image_content
+// for use by integration tests.
+func prepareBinaries() error {
+	fmt.Println("Building testing binaries")
+	binariesDir := filepath.Join("..", "testdata", "binaries")
+	outputDir, err := filepath.Abs(filepath.Join("..", "testdata", "image_content"))
+	if err != nil {
+		return fmt.Errorf("resolving output directory: %w", err)
+	}
+	outputDir += "/"
+
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return fmt.Errorf("creating output directory: %w", err)
+	}
+
+	entries, err := os.ReadDir(binariesDir)
+	if err != nil {
+		return fmt.Errorf("reading binaries directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		srcDir := filepath.Join(binariesDir, entry.Name())
+
+  		// -X main.Version=1.0.0 — sets a clean version string so we have clean PURLs for our binaries
+  		// -buildid= — strips the build ID, to remove the timestamp embedded in the binary metadata
+		cmd := exec.Command("go", "build", "-ldflags", "-buildid= -X main.Version=1.0.0", "-o", outputDir, ".")
+		cmd.Dir = srcDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("building %s: %s%w", entry.Name(), output, err)
+		}
+	}
+
+	return nil
+}
 
 func createTestScanner() (*Scanner, error) {
 	return NewScanner(
@@ -141,12 +193,25 @@ func (testCase *TestCase) run(t *testing.T, scanner *Scanner, buildahBinary stri
 	// - FilterPath on Pullspec: strips @sha256: digests before comparing pullspecs,
 	//   since actual digests vary between builds and should not cause test failures
 	diff := cmp.Diff(testCase.ExpectedResult.Packages, result.Packages,
-		cmpopts.SortSlices(func(a, b PackageMetadataItem) bool { return a.PackageURL < b.PackageURL }),
+		cmpopts.SortSlices(func(a, b PackageMetadataItem) bool {
+			if a.PackageURL != b.PackageURL {
+				return a.PackageURL < b.PackageURL
+			}
+			return a.DependencyOfPURL < b.DependencyOfPURL
+		}),
 		cmpopts.EquateEmpty(),
 		cmp.FilterPath(func(p cmp.Path) bool {
 			return p.String() == "Pullspec"
 		}, cmp.Comparer(func(a, b string) bool {
 			return normalizePullspec(a) == normalizePullspec(b)
+		})),
+		cmp.FilterPath(func(p cmp.Path) bool {
+			return p.String() == "PackageURL"
+		}, cmp.Comparer(func(a, b string) bool {
+			// we normalize go stdlib purls so mismatch between the
+			// local and github versions doesn't cause issues in package
+			// comparisons
+			return normalizeStdlibPURL(a) == normalizeStdlibPURL(b)
 		})),
 	)
 	if diff != "" {
@@ -251,6 +316,15 @@ func (buildDef *BuildDefinition) runBuildah(buildahBinary, tag string, saveStage
 		return fmt.Errorf("buildah build failed:\n%s%w", buf.String(), err)
 	}
 	return nil
+}
+
+const stdlibPURLPrefix = "pkg:golang/stdlib@"
+
+func normalizeStdlibPURL(purl string) string {
+	if strings.HasPrefix(purl, stdlibPURLPrefix) {
+		return stdlibPURLPrefix
+	}
+	return purl
 }
 
 func normalizePullspec(pullspec string) string {
@@ -374,72 +448,190 @@ func normalizeTestCaseTags(testCase *TestCase) {
 	}
 }
 
+// Builder struct used to efficiently construct expected package metadata items
+// for test cases
+type pkgMetaItemBuilder struct {
+	inner []PackageMetadataItem
+	pullspec string
+	originType string
+	stageAlias string
+}
+
+// Set the expected origin type for all inner package metadata items
+func (b *pkgMetaItemBuilder) ExpectedOriginType(ot string) *pkgMetaItemBuilder {
+	b.originType = ot
+	return b
+}
+
+// Set the expected pullspec for all inner package metadata items
+func (b *pkgMetaItemBuilder) ExpectedPullspec(pullspec string) *pkgMetaItemBuilder {
+	b.pullspec = pullspec
+	return b
+}
+
+// Set the expected stage alias for all inner package metadata items
+func (b *pkgMetaItemBuilder) ExpectedStageAlias(alias string) *pkgMetaItemBuilder {
+	b.stageAlias = alias
+	return b
+}
+
+// Build the expected package metadata items.
+func (b *pkgMetaItemBuilder) Build() []PackageMetadataItem {
+	items := make([]PackageMetadataItem, len(b.inner))
+	copy(items, b.inner)
+
+	for i := range items {
+		items[i].Pullspec = b.pullspec
+		items[i].OriginType = b.originType
+		items[i].StageAlias = b.stageAlias
+	}
+
+	return items
+}
+
+var syfterBuilder = pkgMetaItemBuilder{
+	inner: []PackageMetadataItem {
+		{
+			PackageURL:       "pkg:golang/github.com/anchore/syft@v1.32.0",
+			DependencyOfPURL: "pkg:golang/syfter@v1.0.0",
+        },
+        {
+			PackageURL:       "pkg:golang/github.com/facebookincubator/nvdtools@v0.1.5",
+			DependencyOfPURL: "pkg:golang/syfter@v1.0.0",
+		},
+		{
+			PackageURL:       "pkg:golang/stdlib@1.26.2-X%3Anodwarf5",
+			DependencyOfPURL: "pkg:golang/syfter@v1.0.0",
+		},
+		{
+			PackageURL: "pkg:golang/syfter@v1.0.0",
+		},
+    },
+}
+
+var texterBuilder = pkgMetaItemBuilder{
+	inner: []PackageMetadataItem{
+		{
+			PackageURL:       "pkg:golang/golang.org/x/text@v0.18.0",
+			DependencyOfPURL: "pkg:golang/texter@v1.0.0",
+		},
+		{
+			PackageURL:       "pkg:golang/stdlib@1.26.2-X%3Anodwarf5",
+			DependencyOfPURL: "pkg:golang/texter@v1.0.0",
+		},
+		{
+			PackageURL: "pkg:golang/texter@v1.0.0",
+		},
+	},
+}
+
+var syncerBuilder = pkgMetaItemBuilder{
+	inner: []PackageMetadataItem{
+		{
+			PackageURL:       "pkg:golang/golang.org/x/sync@v0.8.0",
+			DependencyOfPURL: "pkg:golang/syncer@v1.0.0",
+		},
+		{
+			PackageURL:       "pkg:golang/stdlib@1.26.2-X%3Anodwarf5",
+			DependencyOfPURL: "pkg:golang/syncer@v1.0.0",
+		},
+		{
+			PackageURL: "pkg:golang/syncer@v1.0.0",
+		},
+	},
+}
+
+var uuiderBuilder = pkgMetaItemBuilder{
+	inner: []PackageMetadataItem{
+		{
+			PackageURL:       "pkg:golang/github.com/google/uuid@v1.6.0",
+			DependencyOfPURL: "pkg:golang/uuider@v1.0.0",
+		},
+		{
+			PackageURL:       "pkg:golang/stdlib@1.26.2-X%3Anodwarf5",
+			DependencyOfPURL: "pkg:golang/uuider@v1.0.0",
+		},
+		{
+			PackageURL: "pkg:golang/uuider@v1.0.0",
+		},
+	},
+}
+
+var expBuilder = pkgMetaItemBuilder{
+	inner: []PackageMetadataItem{
+		{
+			PackageURL:       "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
+			DependencyOfPURL: "pkg:golang/exp@v1.0.0",
+		},
+		{
+			PackageURL:       "pkg:golang/stdlib@1.26.2-X%3Anodwarf5",
+			DependencyOfPURL: "pkg:golang/exp@v1.0.0",
+		},
+		{
+			PackageURL: "pkg:golang/exp@v1.0.0",
+		},
+	},
+}
+
 // TestIntegration runs end-to-end tests: builds test images, scans them for packages,
 // and compares results against expected package metadata.
 func TestIntegration(t *testing.T) {
-
 	testCases := map[string]TestCase{
 		"Identification of the builder base image content - no intermediate image, single file copy": {
 			TestImage: BuildDefinition{
 				ContainerfileContent: `FROM localhost/capo-builder/go_builder:latest as builder
 										FROM scratch
-										COPY --from=builder /opt/go.mod /opt/go.mod`,
+										COPY --from=builder /opt/syfter /opt/syfter`,
 				ContextDirectory: "../testdata/image_content",
 			},
 			BuilderImages: []BuildDefinition{
 				{
 					Tag: "localhost/capo-builder/go_builder:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/go.mod`,
+											COPY syfter /opt/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/capo-builder/go_builder@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: syfterBuilder.
+					ExpectedPullspec("localhost/capo-builder/go_builder@sha256:dummy").
+					ExpectedOriginType("builder").
+					ExpectedStageAlias("builder").
+					Build(),
 			},
 		},
 		"Identification of the builder and intermediate content - single file COPY from intermediate": {
 			TestImage: BuildDefinition{
 				Tag: "test-single-file-copy",
 				ContainerfileContent: `FROM localhost/singlefile-base:latest AS builder
-										COPY go_uuid.mod /content/go.mod
+										COPY uuider /content/uuider
 
 										FROM scratch
-										COPY --from=builder /content/go.mod /content/go.mod`,
+										COPY --from=builder /content/uuider /content/uuider`,
 				ContextDirectory: "../testdata/image_content",
 			},
 			BuilderImages: []BuildDefinition{
 				{
 					Tag: "localhost/singlefile-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/singlefile-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: uuiderBuilder.
+					ExpectedPullspec("localhost/singlefile-base@sha256:dummy").
+					ExpectedOriginType("intermediate").
+					ExpectedStageAlias("builder").
+					Build(),
 			},
 		},
 		"Identification of the builder and intermediate content - directory copy": {
 			TestImage: BuildDefinition{
 				Tag: "test-builder-intermediate",
 				ContainerfileContent: `FROM localhost/capo-builder/go_builder:latest AS builder
-										COPY go_uuid.mod /opt/app2/go.mod
-										COPY go_text.mod /unused/go.mod
+										COPY uuider /opt/app2/uuider
+										COPY texter /unused/texter
 
 										FROM scratch
 										COPY --from=builder /opt/ /opt/`,
@@ -449,38 +641,32 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/capo-builder/go_builder:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/app1/go.mod
-											COPY go_sync.mod /base_unused/go.mod`,
+											COPY syfter /opt/app1/syfter
+											COPY syncer /base_unused/syncer`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/capo-builder/go_builder@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/capo-builder/go_builder@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/capo-builder/go_builder@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/capo-builder/go_builder@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		"Two stages with same pullspec but different intermediate content": {
 			TestImage: BuildDefinition{
 				Tag: "test-same-pullspec-different-content",
 				ContainerfileContent: `FROM localhost/builder-base:latest AS stage1
-										COPY go_uuid.mod /opt/app1/go.mod
-										COPY go_text.mod /untracked/s1/go.mod
+										COPY uuider /opt/app1/uuider
+										COPY texter /untracked/s1/texter
 
 										FROM localhost/builder-base:latest AS stage2
-										COPY go_exp.mod /opt/app2/go.mod
-										COPY go_text.mod /untracked/s2/go.mod
+										COPY exp /opt/app2/exp
+										COPY texter /untracked/s2/texter
 
 										FROM scratch
 										COPY --from=stage1 /opt/ /opt/
@@ -491,41 +677,32 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/builder-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/base/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /opt/base/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "stage1",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "stage1",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "stage2",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("stage1").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("stage1").Build(),
+					expBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("stage2").Build(),
+				),
 			},
 		},
 		"Multiple sources in single COPY --from command": {
 			TestImage: BuildDefinition{
 				Tag: "test-multi-source-copy",
 				ContainerfileContent: `FROM localhost/multi-base:latest AS builder
-										COPY go_uuid.mod /src1/go.mod
-										COPY go_exp.mod /src2/go.mod
-										COPY go_text.mod /untracked/builder/go.mod
+										COPY uuider /src1/uuider
+										COPY exp /src2/exp
+										COPY texter /untracked/builder/texter
 
 										FROM scratch
 										COPY --from=builder /base /src1 /src2 /dest/`,
@@ -535,32 +712,23 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/multi-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /base/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/multi-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/multi-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/multi-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/multi-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/multi-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+					expBuilder.ExpectedPullspec("localhost/multi-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		"ARG substitution": {
@@ -572,8 +740,8 @@ func TestIntegration(t *testing.T) {
 
 										FROM ${BASE_IMG} AS ${BUILDER_STAGE}
 										ENV CONTENT_DIR=/content
-										COPY go_uuid.mod ${CONTENT_DIR}/app2/go.mod
-										COPY go_text.mod /untracked/builder/go.mod
+										COPY uuider ${CONTENT_DIR}/app2/uuider
+										COPY texter /untracked/builder/texter
 
 										FROM scratch
 										ARG BUILDER_STAGE=builder
@@ -584,33 +752,27 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/arg-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /content/app1/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /content/app1/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/arg-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/arg-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/arg-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/arg-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		"Multiarch build args - TARGETARCH in builder base image tag": {
 			TestImage: BuildDefinition{
 				Tag: "test-multiarch-targetarch",
 				ContainerfileContent: `FROM localhost/multiarch-base:${TARGETARCH} AS builder
-										COPY go_uuid.mod /opt/app2/go.mod
+										COPY uuider /opt/app2/uuider
 
 										FROM scratch
 										COPY --from=builder /opt/ /opt/`,
@@ -620,26 +782,20 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/multiarch-base:" + runtime.GOARCH,
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/app1/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /opt/app1/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/multiarch-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/multiarch-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/multiarch-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/multiarch-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		"Content cascade through COPY --from between builder stages": {
@@ -647,7 +803,7 @@ func TestIntegration(t *testing.T) {
 			TestImage: BuildDefinition{
 				Tag: "test-copy-cascade-builders",
 				ContainerfileContent: `FROM localhost/base1:latest AS builder
-										COPY go_uuid.mod /content/app3/go.mod
+										COPY uuider /content/app3/uuider
 
 										FROM localhost/base2:latest AS forwarder
 										COPY --from=builder /content /content
@@ -660,39 +816,30 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/base1:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /content/app1/go.mod
-											COPY go2.mod /untracked/base1/go.mod`,
+											COPY syfter /content/app1/syfter
+											COPY go2 /untracked/base1/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
 					Tag: "localhost/base2:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_exp.mod /content/app2/go.mod
-											COPY go2.mod /untracked/base2/go.mod`,
+											COPY exp /content/app2/exp
+											COPY go2 /untracked/base2/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/base1@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/base1@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "builder",
-						Pullspec:   "localhost/base2@sha256:dummy",
-						StageAlias: "forwarder",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/base1@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/base1@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+					expBuilder.ExpectedPullspec("localhost/base2@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("forwarder").Build(),
+				),
 			},
 		},
 		// Verify that if a builder stage is used as a base for the final
@@ -701,10 +848,10 @@ func TestIntegration(t *testing.T) {
 			TestImage: BuildDefinition{
 				Tag: "test-final-uses-builder-base",
 				ContainerfileContent: `FROM localhost/builder1:latest AS builder
-										COPY go_uuid.mod /content/go.mod
+										COPY uuider /content/uuider
 
 										FROM localhost/builder2:latest AS alias_as_base
-										COPY go_exp.mod /content/go.mod
+										COPY exp /content/exp
 
 										FROM alias_as_base
 										COPY --from=builder /base1 /base1
@@ -715,31 +862,25 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/builder1:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base1/go.mod`,
+											COPY syfter /base1/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
 					Tag: "localhost/builder2:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_sync.mod /base2/go.mod`,
+											COPY syncer /base2/syncer`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/builder1@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder1@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/builder1@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/builder1@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		// WARNING: This test is not specifically "correct", ideally content
@@ -750,10 +891,10 @@ func TestIntegration(t *testing.T) {
 			TestImage: BuildDefinition{
 				Tag: "test-final-uses-builder-base-with-copy",
 				ContainerfileContent: `FROM localhost/builder1:latest AS builder
-										COPY go_uuid.mod /content/go.mod
+										COPY uuider /content/uuider
 
 										FROM localhost/builder2:latest AS alias_as_base
-										COPY go_exp.mod /content/go.mod
+										COPY exp /content/exp
 
 										FROM alias_as_base
 										COPY --from=builder /base1 /base1
@@ -766,51 +907,39 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/builder1:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base1/go.mod`,
+											COPY syfter /base1/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
 					Tag: "localhost/builder2:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_sync.mod /base2/go.mod`,
+											COPY syncer /base2/syncer`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/builder1@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder1@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/sync@v0.8.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/builder2@sha256:dummy",
-						StageAlias: "alias_as_base",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder2@sha256:dummy",
-						StageAlias: "alias_as_base",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/builder1@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/builder1@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+					syncerBuilder.ExpectedPullspec("localhost/builder2@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("alias_as_base").Build(),
+					expBuilder.ExpectedPullspec("localhost/builder2@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("alias_as_base").Build(),
+				),
 			},
 		},
 		"Path prefix collision - /opt should not match /optional": {
 			TestImage: BuildDefinition{
 				Tag: "test-path-prefix-collision",
 				ContainerfileContent: `FROM localhost/prefix-base:latest AS builder
-										COPY go_uuid.mod /opt/go.mod
-										COPY go_exp.mod /optional/go.mod
+										COPY uuider /opt/uuider
+										COPY exp /optional/exp
 
 										FROM scratch
 										COPY --from=builder /opt /opt`,
@@ -820,30 +949,27 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/prefix-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod`,
+											COPY syfter /base/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/prefix-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: uuiderBuilder.
+					ExpectedPullspec("localhost/prefix-base@sha256:dummy").
+					ExpectedOriginType("intermediate").
+					ExpectedStageAlias("builder").
+					Build(),
 			},
 		},
 		"[Path normalization] Malformed and dot-dot paths in COPY --from": {
 			TestImage: BuildDefinition{
 				Tag: "test-path-normalization",
 				ContainerfileContent: `FROM localhost/pathnorm-base:latest AS builder
-										COPY go_uuid.mod //opt/go.mod
-										COPY go_exp.mod /content/go.mod
+										COPY uuider //opt/uuider
+										COPY exp /content/exp
 
 										FROM scratch
-										COPY --from=builder etc/../opt/.//go.mod /opt/go.mod
+										COPY --from=builder etc/../opt/.//uuider /opt/uuider
 										COPY --from=builder /foo/../content/ /content/`,
 				ContextDirectory: "../testdata/image_content",
 			},
@@ -851,25 +977,19 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/pathnorm-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_text.mod /base/go.mod`,
+											COPY texter /base/texter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/pathnorm-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/pathnorm-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					expBuilder.ExpectedPullspec("localhost/pathnorm-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/pathnorm-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		// Capo walks COPY destinations in a builder stage to find where content
@@ -881,40 +1001,37 @@ func TestIntegration(t *testing.T) {
 				ContainerfileContent: `FROM localhost/trace-prefix-provider:latest AS provider
 
 										FROM localhost/trace-prefix-base:latest AS builder
-										COPY --from=provider /opt/go.mod /opt/go.mod
-										COPY --from=provider /optional/go.mod /optional/go.mod
+										COPY --from=provider /opt/uuider /opt/uuider
+										COPY --from=provider /optional/exp /optional/exp
 
 										FROM scratch
-										COPY --from=builder /opt/go.mod /opt/go.mod`,
+										COPY --from=builder /opt/uuider /opt/uuider`,
 				ContextDirectory: "../testdata/image_content",
 			},
 			BuilderImages: []BuildDefinition{
 				{
 					Tag: "localhost/trace-prefix-provider:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_uuid.mod /opt/go.mod
-											COPY go_exp.mod /optional/go.mod`,
+											COPY uuider /opt/uuider
+											COPY exp /optional/exp`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
 					Tag: "localhost/trace-prefix-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod`,
+											COPY syfter /base/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/trace-prefix-provider@sha256:dummy",
-						StageAlias: "provider",
-					},
-				},
+				Packages: uuiderBuilder.
+					ExpectedPullspec("localhost/trace-prefix-provider@sha256:dummy").
+					ExpectedOriginType("builder").
+					ExpectedStageAlias("provider").
+					Build(),
 			},
 		},
-		// Two providers copy go.mod into the same /dest/ in builder stage.
+		// Two providers copy content into the same /dest/ in builder stage.
 		// Provider2 overwrites provider1's file. Only exp package (provider2) should be
 		// in the final image. However, capo currently cannot distinguish overlapping
 		// writes — it sees both files in the intermediate layer diff and reports both.
@@ -924,36 +1041,33 @@ func TestIntegration(t *testing.T) {
 			TestImage: BuildDefinition{
 				Tag: "test-overlapping-dest",
 				ContainerfileContent: `FROM localhost/overlap-base:latest AS provider1
-									   COPY go_uuid.mod /src1/go.mod
+									   COPY uuider /src1/content
 
 									   FROM localhost/overlap-base:latest AS provider2
-									   COPY go_exp.mod /src2/go.mod
+									   COPY exp /src2/content
 
 									   FROM localhost/overlap-base:latest AS builder
 									   COPY --from=provider1 /src1/ /dest/
 									   COPY --from=provider2 /src2/ /dest/
 
 									   FROM scratch
-									   COPY --from=builder /dest/go.mod /dest/go.mod`,
+									   COPY --from=builder /dest/content /dest/content`,
 				ContextDirectory: "../testdata/image_content",
 			},
 			BuilderImages: []BuildDefinition{
 				{
 					Tag: "localhost/overlap-base:latest",
 					ContainerfileContent: `FROM scratch
-										   COPY go_syft.mod /base/go.mod`,
+										   COPY syfter /base/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/overlap-base@sha256:dummy",
-						StageAlias: "provider2",
-					},
-				},
+				Packages: expBuilder.
+					ExpectedPullspec("localhost/overlap-base@sha256:dummy").
+					ExpectedOriginType("intermediate").
+					ExpectedStageAlias("provider2").
+					Build(),
 			},
 		},
 		"Intermediate content overwrites builder base content at same path": {
@@ -961,7 +1075,7 @@ func TestIntegration(t *testing.T) {
 			TestImage: BuildDefinition{
 				Tag: "test-intermediate-overwrites-base",
 				ContainerfileContent: `FROM localhost/overwrite-base:latest AS builder
-									   COPY go_uuid.mod /opt/app1/go.mod
+									   COPY uuider /opt/app1/content
 
 									   FROM scratch
 									   COPY --from=builder /opt /opt`,
@@ -971,35 +1085,32 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/overwrite-base:latest",
 					ContainerfileContent: `FROM scratch
-										   COPY go_syft.mod /opt/app1/go.mod`,
+										   COPY syfter /opt/app1/content`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/overwrite-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: uuiderBuilder.
+					ExpectedPullspec("localhost/overwrite-base@sha256:dummy").
+					ExpectedOriginType("intermediate").
+					ExpectedStageAlias("builder").
+					Build(),
 			},
 		},
 		"[Chained stages] Grandparent, parent and child builder cascade with intermediate content": {
 			TestImage: BuildDefinition{
 				Tag: "test-chained-stages-cascade",
 				ContainerfileContent: `FROM localhost/builder-sync:latest AS grandparent
-										COPY go_uuid.mod /opt/app2/go.mod
-										COPY go_text.mod /untracked/gp/go.mod
+										COPY uuider /opt/app2/uuider
+										COPY texter /untracked/gp/texter
 
 										FROM grandparent AS parent
-										COPY go_exp.mod /opt/app3/go.mod
-										COPY go_text.mod /untracked/p/go.mod
+										COPY exp /opt/app3/exp
+										COPY texter /untracked/p/texter
 
 										FROM parent AS child
-										COPY go_sync.mod /opt/app4/go.mod
-										COPY go_text.mod /untracked/c/go.mod
+										COPY syncer /opt/app4/syncer
+										COPY texter /untracked/c/texter
 
 										FROM scratch
 										COPY --from=child /opt/ /opt/`,
@@ -1009,46 +1120,34 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/builder-sync:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/app1/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /opt/app1/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/builder-sync@sha256:dummy",
-						StageAlias: "grandparent",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder-sync@sha256:dummy",
-						StageAlias: "grandparent",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder-sync@sha256:dummy",
-						StageAlias: "parent",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/sync@v0.8.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder-sync@sha256:dummy",
-						StageAlias: "child",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/builder-sync@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("grandparent").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/builder-sync@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("grandparent").Build(),
+					expBuilder.ExpectedPullspec("localhost/builder-sync@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("parent").Build(),
+					syncerBuilder.ExpectedPullspec("localhost/builder-sync@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("child").Build(),
+				),
 			},
 		},
 		"[Chained stages] Empty child chained stage (no build instructions)": {
 			TestImage: BuildDefinition{
 				Tag: "test-empty-chained-stage",
 				ContainerfileContent: `FROM localhost/capo-builder/go_builder:latest AS parent-stage
-										COPY go_uuid.mod /opt/app2/go.mod
-										COPY go_text.mod /untracked/parent/go.mod
+										COPY uuider /opt/app2/uuider
+										COPY texter /untracked/parent/texter
 
 										FROM parent-stage AS empty-child
 
@@ -1060,26 +1159,20 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/capo-builder/go_builder:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/app1/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /opt/app1/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/capo-builder/go_builder@sha256:dummy",
-						StageAlias: "parent-stage",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/capo-builder/go_builder@sha256:dummy",
-						StageAlias: "parent-stage",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/capo-builder/go_builder@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("parent-stage").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/capo-builder/go_builder@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("parent-stage").Build(),
+				),
 			},
 		},
 		"[Chained stages] Multiple empty chained stages with intermediate only in last stage": {
@@ -1090,8 +1183,8 @@ func TestIntegration(t *testing.T) {
 										FROM first AS second
 
 										FROM second AS third
-										COPY go_uuid.mod /opt/app/go.mod
-										COPY go_text.mod /untracked/third/go.mod
+										COPY uuider /opt/app/uuider
+										COPY texter /untracked/third/texter
 
 										FROM scratch
 										COPY --from=third /opt/ /opt/`,
@@ -1101,46 +1194,40 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/builder-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/base/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /opt/base/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "first",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "third",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("first").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("third").Build(),
+				),
 			},
 		},
 		"[Chained stages] Complex cascade: non-empty, empty, non-empty, empty, non-empty": {
 			TestImage: BuildDefinition{
 				Tag: "test-complex-cascade",
 				ContainerfileContent: `FROM localhost/builder-base:latest AS stage1
-										COPY go_uuid.mod /opt/app1/go.mod
-										COPY go_text.mod /untracked/s1/go.mod
+										COPY uuider /opt/app1/uuider
+										COPY texter /untracked/s1/texter
 
 										FROM stage1 AS stage2
 
 										FROM stage2 AS stage3
-										COPY go_exp.mod /opt/app2/go.mod
-										COPY go_text.mod /untracked/s3/go.mod
+										COPY exp /opt/app2/exp
+										COPY texter /untracked/s3/texter
 
 										FROM stage3 AS stage4
 
 										FROM stage4 AS stage5
-										COPY go_sync.mod /opt/app3/go.mod
-										COPY go_text.mod /untracked/s5/go.mod
+										COPY syncer /opt/app3/syncer
+										COPY texter /untracked/s5/texter
 
 										FROM scratch
 										COPY --from=stage5 /opt/ /opt/`,
@@ -1150,38 +1237,26 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/builder-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/base/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /opt/base/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "stage1",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "stage1",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "stage3",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/sync@v0.8.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "stage5",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("stage1").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("stage1").Build(),
+					expBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("stage3").Build(),
+					syncerBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("stage5").Build(),
+				),
 			},
 		},
 		"[Chained stages] Empty chained stages copying only builder base content": {
@@ -1199,36 +1274,33 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/builder-with-content:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/content/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /opt/content/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/builder-with-content@sha256:dummy",
-						StageAlias: "alias",
-					},
-				},
+				Packages: syfterBuilder.
+					ExpectedPullspec("localhost/builder-with-content@sha256:dummy").
+					ExpectedOriginType("builder").
+					ExpectedStageAlias("alias").
+					Build(),
 			},
 		},
 		"[Chained stages] Diamond dependency - two branches from same parent": {
 			TestImage: BuildDefinition{
 				Tag: "test-diamond-dependency",
 				ContainerfileContent: `FROM localhost/diamond-base:latest AS shared
-										COPY go_uuid.mod /shared/go.mod
-										COPY go_text.mod /untracked/shared/go.mod
+										COPY uuider /shared/uuider
+										COPY texter /untracked/shared/texter
 
 										FROM shared AS left
-										COPY go_exp.mod /left/go.mod
-										COPY go_text.mod /untracked/left/go.mod
+										COPY exp /left/exp
+										COPY texter /untracked/left/texter
 
 										FROM shared AS right
-										COPY go_sync.mod /right/go.mod
-										COPY go_text.mod /untracked/right/go.mod
+										COPY syncer /right/syncer
+										COPY texter /untracked/right/texter
 
 										FROM scratch
 										COPY --from=left /shared /shared
@@ -1241,38 +1313,26 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/diamond-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /base/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/diamond-base@sha256:dummy",
-						StageAlias: "shared",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/diamond-base@sha256:dummy",
-						StageAlias: "shared",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/diamond-base@sha256:dummy",
-						StageAlias: "left",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/sync@v0.8.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/diamond-base@sha256:dummy",
-						StageAlias: "right",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/diamond-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("shared").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/diamond-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("shared").Build(),
+					expBuilder.ExpectedPullspec("localhost/diamond-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("left").Build(),
+					syncerBuilder.ExpectedPullspec("localhost/diamond-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("right").Build(),
+				),
 			},
 		},
 		// Stage alias "alpine" collides with real image name.
@@ -1283,10 +1343,10 @@ func TestIntegration(t *testing.T) {
 			TestImage: BuildDefinition{
 				Tag: "test-alias-matches-image",
 				ContainerfileContent: `FROM localhost/builderwithbadalias:latest AS alpine
-										COPY go_uuid.mod /opt/app2/go.mod
+										COPY uuider /opt/app2/uuider
 
 										FROM alpine AS stage2
-										COPY go_exp.mod /opt/app3/go.mod
+										COPY exp /opt/app3/exp
 
 										FROM scratch
 										COPY --from=stage2 /opt/ /opt/`,
@@ -1296,39 +1356,30 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "builderwithbadalias",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/app1/go.mod`,
+											COPY syfter /opt/app1/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/builderwithbadalias@sha256:dummy",
-						StageAlias: "alpine",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builderwithbadalias@sha256:dummy",
-						StageAlias: "alpine",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builderwithbadalias@sha256:dummy",
-						StageAlias: "stage2",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/builderwithbadalias@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("alpine").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/builderwithbadalias@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("alpine").Build(),
+					expBuilder.ExpectedPullspec("localhost/builderwithbadalias@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("stage2").Build(),
+				),
 			},
 		},
 		"[Chained stages / external content] Content traced through intermediate builder via COPY chain with external image": {
 			TestImage: BuildDefinition{
 				Tag: "test-chain-with-external",
 				ContainerfileContent: `FROM localhost/base-img:latest AS builder
-										COPY go_uuid.mod /content/app1/go.mod
-										COPY go_sync.mod /untracked/builder/go.mod
+										COPY uuider /content/app1/uuider
+										COPY syncer /untracked/builder/syncer
 
 										FROM builder AS other-builder
 										COPY --from=localhost/in-chain-ext:latest /ext /ext
@@ -1343,46 +1394,38 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/base-img:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /base/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
 					Tag: "localhost/in-chain-ext:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_text.mod /ext/go.mod
-											COPY go2.mod /untracked/ext/go.mod`,
+											COPY texter /ext/texter
+											COPY go2 /untracked/ext/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/base-img@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/base-img@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/text@v0.18.0",
-						OriginType: "external",
-						Pullspec:   "localhost/in-chain-ext@sha256:dummy",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/base-img@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/base-img@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+					texterBuilder.ExpectedPullspec("localhost/in-chain-ext@sha256:dummy").
+						ExpectedOriginType("external").
+						ExpectedStageAlias("").Build(),
+				),
 			},
 		},
 		"[External content] External COPY in final stage": {
 			TestImage: BuildDefinition{
 				Tag: "test-external-copy-final",
 				ContainerfileContent: `FROM localhost/builder-base:latest AS builder
-										COPY go_uuid.mod /content/go.mod
-										COPY go_sync.mod /untracked/builder/go.mod
+										COPY uuider /content/uuider
+										COPY syncer /untracked/builder/syncer
 
 										FROM scratch
 										COPY --from=builder /base /base
@@ -1394,38 +1437,30 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/builder-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /base/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
 					Tag: "localhost/external:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_text.mod /ext/go.mod
-											COPY go2.mod /untracked/ext/go.mod`,
+											COPY texter /ext/texter
+											COPY go2 /untracked/ext/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/text@v0.18.0",
-						OriginType: "external",
-						Pullspec:   "localhost/external@sha256:dummy",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+					texterBuilder.ExpectedPullspec("localhost/external@sha256:dummy").
+						ExpectedOriginType("external").
+						ExpectedStageAlias("").Build(),
+				),
 			},
 		},
 		// OriginType "external" distinguishes content from external images
@@ -1438,8 +1473,8 @@ func TestIntegration(t *testing.T) {
 				Tag: "test-external-copy-in-builder",
 				ContainerfileContent: `FROM localhost/builder-base:latest AS builder
 										COPY --from=localhost/external:latest /ext /ext
-										COPY go_uuid.mod /content/go.mod
-										COPY go_sync.mod /untracked/builder/go.mod
+										COPY uuider /content/uuider
+										COPY syncer /untracked/builder/syncer
 
 										FROM scratch
 										COPY --from=builder /base /base
@@ -1451,38 +1486,30 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/builder-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /base/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
 					Tag: "localhost/external:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_text.mod /ext/go.mod
-											COPY go2.mod /untracked/ext/go.mod`,
+											COPY texter /ext/texter
+											COPY go2 /untracked/ext/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/builder-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/text@v0.18.0",
-						OriginType: "external",
-						Pullspec:   "localhost/external@sha256:dummy",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/builder-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+					texterBuilder.ExpectedPullspec("localhost/external@sha256:dummy").
+						ExpectedOriginType("external").
+						ExpectedStageAlias("").Build(),
+				),
 			},
 		},
 		"[Pullspec normalization] Pullspec is missing registry and tag/digest": {
@@ -1490,7 +1517,7 @@ func TestIntegration(t *testing.T) {
 			TestImage: BuildDefinition{
 				Tag: "test-simple-pullspec",
 				ContainerfileContent: `FROM image AS builder
-										COPY go_uuid.mod /opt/app1/go.mod
+										COPY uuider /opt/app1/uuider
 
 										FROM scratch
 										COPY --from=builder /opt /opt`,
@@ -1500,25 +1527,19 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "image",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/app2/go.mod`,
+											COPY syfter /opt/app2/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/image@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/image@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/image@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/image@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		"[Pullspec normalization] Pullspec missing registry and alias is identical to alias - FROM image AS image": {
@@ -1526,7 +1547,7 @@ func TestIntegration(t *testing.T) {
 			TestImage: BuildDefinition{
 				Tag: "test-identical-pullspec-alias",
 				ContainerfileContent: `FROM image AS image
-										COPY go_uuid.mod /content/go.mod
+										COPY uuider /content/uuider
 
 										FROM scratch
 										COPY --from=image /base /base
@@ -1537,37 +1558,31 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "image",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod`,
+											COPY syfter /base/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/image@sha256:dummy",
-						StageAlias: "image",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/image@sha256:dummy",
-						StageAlias: "image",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/image@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("image").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/image@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("image").Build(),
+				),
 			},
 		},
 		"[Numeric index COPY --from] Stages do not have aliases - references are using numeric indices instead of aliases": {
 			TestImage: BuildDefinition{
 				Tag: "test-numeric-indices",
 				ContainerfileContent: `FROM localhost/base1:latest
-										COPY go_uuid.mod /opt/app0/go.mod
-										COPY go_text.mod /untracked/s0/go.mod
+										COPY uuider /opt/app0/uuider
+										COPY texter /untracked/s0/texter
 
 										FROM localhost/base2:latest
-										COPY go_exp.mod /opt/app1/go.mod
-										COPY go_text.mod /untracked/s1/go.mod
+										COPY exp /opt/app1/exp
+										COPY texter /untracked/s1/texter
 
 										FROM scratch
 										COPY --from=0 /opt/ /opt/
@@ -1578,53 +1593,41 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/base1:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /opt/base1/go.mod
-											COPY go2.mod /untracked/base1/go.mod`,
+											COPY syfter /opt/base1/syfter
+											COPY go2 /untracked/base1/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
 					Tag: "localhost/base2:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_sync.mod /opt/base2/go.mod
-											COPY go2.mod /untracked/base2/go.mod`,
+											COPY syncer /opt/base2/syncer
+											COPY go2 /untracked/base2/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/base1@sha256:dummy",
-						StageAlias: "0",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/base1@sha256:dummy",
-						StageAlias: "0",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/sync@v0.8.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/base2@sha256:dummy",
-						StageAlias: "1",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/base2@sha256:dummy",
-						StageAlias: "1",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/base1@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("0").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/base1@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("0").Build(),
+					syncerBuilder.ExpectedPullspec("localhost/base2@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("1").Build(),
+					expBuilder.ExpectedPullspec("localhost/base2@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("1").Build(),
+				),
 			},
 		},
 		"[Numeric index COPY --from] COPY --from with numeric index in final stage (stage has alias)": {
 			TestImage: BuildDefinition{
 				Tag: "test-numeric-copy-from-final",
 				ContainerfileContent: `FROM localhost/numfinal-base:latest AS builder
-										COPY go_uuid.mod /content/go.mod
-										COPY go_text.mod /untracked/builder/go.mod
+										COPY uuider /content/uuider
+										COPY texter /untracked/builder/texter
 
 										FROM scratch
 										COPY --from=0 /content /content`,
@@ -1634,32 +1637,29 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/numfinal-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod
-											COPY go2.mod /untracked/base/go.mod`,
+											COPY syfter /base/syfter
+											COPY go2 /untracked/base/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/numfinal-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: uuiderBuilder.
+					ExpectedPullspec("localhost/numfinal-base@sha256:dummy").
+					ExpectedOriginType("intermediate").
+					ExpectedStageAlias("builder").
+					Build(),
 			},
 		},
 		"[Numeric index COPY --from] COPY --from with numeric index in builder stage (stages have alias)": {
 			TestImage: BuildDefinition{
 				Tag: "test-numeric-copy-from-builder",
 				ContainerfileContent: `FROM localhost/numbuilder-base1:latest AS builder1
-										COPY go_uuid.mod /content/go.mod
-										COPY go_text.mod /untracked/b1/go.mod
+										COPY uuider /content/uuider
+										COPY texter /untracked/b1/texter
 
 										FROM localhost/numbuilder-base2:latest AS builder2
 										COPY --from=0 /content /forwarded
-										COPY go_text.mod /untracked/b2/go.mod
+										COPY texter /untracked/b2/texter
 
 										FROM scratch
 										COPY --from=1 /forwarded /forwarded`,
@@ -1669,27 +1669,24 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/numbuilder-base1:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base1/go.mod
-											COPY go2.mod /untracked/base1/go.mod`,
+											COPY syfter /base1/syfter
+											COPY go2 /untracked/base1/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 				{
 					Tag: "localhost/numbuilder-base2:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_exp.mod /base2/go.mod
-											COPY go2.mod /untracked/base2/go.mod`,
+											COPY exp /base2/exp
+											COPY go2 /untracked/base2/go2`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/numbuilder-base1@sha256:dummy",
-						StageAlias: "builder1",
-					},
-				},
+				Packages: uuiderBuilder.
+					ExpectedPullspec("localhost/numbuilder-base1@sha256:dummy").
+					ExpectedOriginType("intermediate").
+					ExpectedStageAlias("builder1").
+					Build(),
 			},
 		},
 		"[Wildcard COPY] Builder base content": {
@@ -1704,36 +1701,30 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/wildcard-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /app1/go.mod
-											COPY go_uuid.mod /app2/go.mod
-											COPY go_exp.mod /other/go.mod`,
+											COPY syfter /app1/syfter
+											COPY uuider /app2/uuider
+											COPY exp /other/exp`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/wildcard-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/wildcard-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/wildcard-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/wildcard-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		"[Wildcard COPY] Intermediate content": {
 			TestImage: BuildDefinition{
 				Tag: "test-wildcard-copy-intermediate",
 				ContainerfileContent: `FROM localhost/wildcard-inter-base:latest AS builder
-										COPY go_uuid.mod /app1/go.mod
-										COPY go_exp.mod /app2/go.mod
-										COPY go_sync.mod /other/go.mod
+										COPY uuider /app1/uuider
+										COPY exp /app2/exp
+										COPY syncer /other/syncer
 
 										FROM scratch
 										COPY --from=builder /app* /dest/`,
@@ -1743,33 +1734,27 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/wildcard-inter-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /base/go.mod`,
+											COPY syfter /base/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/wildcard-inter-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/exp@v0.0.0-20240808152545-0cdaa3abc0fa",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/wildcard-inter-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					uuiderBuilder.ExpectedPullspec("localhost/wildcard-inter-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+					expBuilder.ExpectedPullspec("localhost/wildcard-inter-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		"[Wildcard COPY] Builder base and intermediate content": {
 			TestImage: BuildDefinition{
 				Tag: "test-wildcard-copy-both",
 				ContainerfileContent: `FROM localhost/wildcard-both-base:latest AS builder
-										COPY go_sync.mod /app3/go.mod
-										COPY go_text.mod /other/go.mod
+										COPY syncer /app3/syncer
+										COPY texter /other/texter
 
 										FROM scratch
 										COPY --from=builder /app* /dest/`,
@@ -1779,54 +1764,42 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/wildcard-both-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go_syft.mod /app1/go.mod
-											COPY go_uuid.mod /app2/go.mod
-											COPY go_exp.mod /other/go.mod`,
+											COPY syfter /app1/syfter
+											COPY uuider /app2/uuider
+											COPY exp /other/exp`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/wildcard-both-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/wildcard-both-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/golang.org/x/sync@v0.8.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/wildcard-both-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/wildcard-both-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/wildcard-both-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					syncerBuilder.ExpectedPullspec("localhost/wildcard-both-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		"[FROM special] FROM scratch as builder base": {
 			TestImage: BuildDefinition{
 				Tag: "test-from-scratch-builder",
 				ContainerfileContent: `FROM scratch AS builder
-										COPY go_uuid.mod /content/go.mod
+										COPY uuider /content/uuider
 
 										FROM scratch
 										COPY --from=builder /content /content`,
 				ContextDirectory: "../testdata/image_content",
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "scratch",
-						StageAlias: "builder",
-					},
-				},
+				Packages: uuiderBuilder.
+					ExpectedPullspec("scratch").
+					ExpectedOriginType("intermediate").
+					ExpectedStageAlias("builder").
+					Build(),
 			},
 		},
 		// All content from oci-archive is treated as intermediate content,
@@ -1836,7 +1809,7 @@ func TestIntegration(t *testing.T) {
 			TestImage: BuildDefinition{
 				Tag: "test-from-oci-archive-builder",
 				ContainerfileContent: `FROM oci-archive:test-base.ociarchive AS builder
-										COPY go_uuid.mod /content/go.mod
+										COPY uuider /content/uuider
 
 										FROM scratch
 										COPY --from=builder /content /content
@@ -1847,33 +1820,27 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "oci-archive:test-base.ociarchive",
 					ContainerfileContent: `FROM scratch
-											COPY go2.mod /tmp/dummy
-											COPY go_syft.mod /opt/go.mod`,
+											COPY go2 /tmp/dummy
+											COPY syfter /opt/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "oci-archive:test-base.ociarchive",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "intermediate",
-						Pullspec:   "oci-archive:test-base.ociarchive",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					uuiderBuilder.ExpectedPullspec("oci-archive:test-base.ociarchive").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+					syfterBuilder.ExpectedPullspec("oci-archive:test-base.ociarchive").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		"[FROM special] FROM docker:// transport as builder base": {
 			TestImage: BuildDefinition{
 				Tag: "test-from-docker-transport",
 				ContainerfileContent: `FROM docker://localhost/docker-transport-base:latest AS builder
-										COPY go_uuid.mod /content/go.mod
+										COPY uuider /content/uuider
 
 										FROM scratch
 										COPY --from=builder /content /content
@@ -1884,26 +1851,20 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/docker-transport-base:latest",
 					ContainerfileContent: `FROM scratch
-											COPY go2.mod /base/go.mod
-											COPY go_syft.mod /C/Users/Shadowman/Desktop/go.mod`,
+											COPY go2 /base/go2
+											COPY syfter /C/Users/Shadowman/Desktop/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/docker-transport-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/docker-transport-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					uuiderBuilder.ExpectedPullspec("localhost/docker-transport-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+					syfterBuilder.ExpectedPullspec("localhost/docker-transport-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		"[WORKDIR] WORKDIR set in intermediate image": {
@@ -1911,7 +1872,7 @@ func TestIntegration(t *testing.T) {
 				Tag: "test-workdir-relative-dest",
 				ContainerfileContent: `FROM localhost/workdir-base:latest AS builder
 									   WORKDIR /opt/app2
-									   COPY go_uuid.mod go.mod
+									   COPY uuider uuider
 
 									   FROM scratch
 									   COPY --from=builder /opt /opt`,
@@ -1921,32 +1882,26 @@ func TestIntegration(t *testing.T) {
 				{
 					Tag: "localhost/workdir-base:latest",
 					ContainerfileContent: `FROM scratch
-										   COPY go_syft.mod /opt/app1/go.mod`,
+										   COPY syfter /opt/app1/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/workdir-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/workdir-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/workdir-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/workdir-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		"[WORKDIR] WORKDIR inherited from builder base image": {
 			TestImage: BuildDefinition{
 				Tag: "test-workdir-inherited",
 				ContainerfileContent: `FROM localhost/workdir-inherited-base:latest AS builder
-									   COPY go_uuid.mod app2/go.mod
+									   COPY uuider app2/uuider
 
 									   FROM scratch
 									   COPY --from=builder /opt /opt`,
@@ -1957,25 +1912,19 @@ func TestIntegration(t *testing.T) {
 					Tag: "localhost/workdir-inherited-base:latest",
 					ContainerfileContent: `FROM scratch
 										   WORKDIR /opt
-										   COPY go_syft.mod app1/go.mod`,
+										   COPY syfter app1/syfter`,
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/workdir-inherited-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-					{
-						PackageURL: "pkg:golang/github.com/google/uuid@v1.6.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/workdir-inherited-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: slices.Concat(
+					syfterBuilder.ExpectedPullspec("localhost/workdir-inherited-base@sha256:dummy").
+						ExpectedOriginType("builder").
+						ExpectedStageAlias("builder").Build(),
+					uuiderBuilder.ExpectedPullspec("localhost/workdir-inherited-base@sha256:dummy").
+						ExpectedOriginType("intermediate").
+						ExpectedStageAlias("builder").Build(),
+				),
 			},
 		},
 		// Check that if the builder image base image has a workdir set, a
@@ -1985,14 +1934,14 @@ func TestIntegration(t *testing.T) {
 			TestImage: BuildDefinition{
 				Tag: "test-relative-workdir-join",
 				ContainerfileContent: `FROM localhost/workdir-inherited-base:latest AS builder
-									   COPY go_syft.mod /opt/app/go.mod
+									   COPY syfter /opt/app/syfter
 
 									   FROM localhost/workdir-inherited-base:latest AS builder2
 									   WORKDIR app/
-				                       COPY --from=builder /opt/app/go.mod go.mod
+				                       COPY --from=builder /opt/app/syfter syfter
 
 									   FROM scratch
-									   COPY --from=builder2 /opt/app/go.mod /go.mod`,
+									   COPY --from=builder2 /opt/app/syfter /syfter`,
 				ContextDirectory: "../testdata/image_content",
 			},
 			BuilderImages: []BuildDefinition{
@@ -2001,27 +1950,24 @@ func TestIntegration(t *testing.T) {
 					ContainerfileContent: `FROM scratch
 										   # this copy command is here to make sure buildah
 										   # creates at least one layer for the builder image
-										   COPY go_uuid.mod go.mod
+										   COPY uuider uuider
 										   WORKDIR /opt`,
 
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "intermediate",
-						Pullspec:   "localhost/workdir-inherited-base@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: syfterBuilder.
+					ExpectedPullspec("localhost/workdir-inherited-base@sha256:dummy").
+					ExpectedOriginType("intermediate").
+					ExpectedStageAlias("builder").
+					Build(),
 			},
 		},
 		"copying from named build context does not fail": {
 			TestImage: BuildDefinition{
 				ContainerfileContent: `	FROM scratch
-										COPY --from=named go2.mod go2.mod`,
+										COPY --from=named go2 go2`,
 				ContextDirectory: "../testdata/image_content",
 				BuildContexts: map[string]string{
 					"named": "../testdata/image_content",
@@ -2064,7 +2010,7 @@ func TestIntegrationDigestLookup(t *testing.T) {
 	t.Run("Builder base image referenced by digest only", func(t *testing.T) {
 		digestRef := buildDigestOnlyImage(t, BuildDefinition{
 			Tag:                  "localhost/capo-digest-test-builder:latest",
-			ContainerfileContent: "FROM scratch\nCOPY go_syft.mod /opt/go.mod",
+			ContainerfileContent: "FROM scratch\nCOPY syfter /opt/syfter",
 			ContextDirectory:     "../testdata/image_content",
 		}, scanner.store, buildahBinary)
 
@@ -2072,18 +2018,14 @@ func TestIntegrationDigestLookup(t *testing.T) {
 			TestImage: BuildDefinition{
 				ContainerfileContent: fmt.Sprintf(`FROM %s as builder
 FROM scratch
-COPY --from=builder /opt/go.mod /opt/go.mod`, digestRef),
+COPY --from=builder /opt/syfter /opt/syfter`, digestRef),
 				ContextDirectory: "../testdata/image_content",
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/capo-digest-test-builder@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: syfterBuilder.
+					ExpectedOriginType("builder").
+					ExpectedPullspec("localhost/capo-digest-test-builder@sha256:dummy").
+					ExpectedStageAlias("builder").Build(),
 			},
 		}
 		normalizeTestCaseTags(&tc)
@@ -2096,7 +2038,7 @@ COPY --from=builder /opt/go.mod /opt/go.mod`, digestRef),
 		builderTag := "localhost/capo-tagdigest-test-builder:v1"
 		digestRef := buildDigestOnlyImage(t, BuildDefinition{
 			Tag:                  builderTag,
-			ContainerfileContent: "FROM scratch\nCOPY go_syft.mod /opt/go.mod",
+			ContainerfileContent: "FROM scratch\nCOPY syfter /opt/syfter",
 			ContextDirectory:     "../testdata/image_content",
 		}, scanner.store, buildahBinary)
 
@@ -2108,18 +2050,14 @@ COPY --from=builder /opt/go.mod /opt/go.mod`, digestRef),
 			TestImage: BuildDefinition{
 				ContainerfileContent: fmt.Sprintf(`FROM %s as builder
 FROM scratch
-COPY --from=builder /opt/go.mod /opt/go.mod`, tagDigestRef),
+COPY --from=builder /opt/syfter /opt/syfter`, tagDigestRef),
 				ContextDirectory: "../testdata/image_content",
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost/capo-tagdigest-test-builder@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: syfterBuilder.
+					ExpectedOriginType("builder").
+					ExpectedPullspec("localhost/capo-tagdigest-test-builder@sha256:dummy").
+					ExpectedStageAlias("builder").Build(),
 			},
 		}
 		normalizeTestCaseTags(&tc)
@@ -2132,7 +2070,7 @@ COPY --from=builder /opt/go.mod /opt/go.mod`, tagDigestRef),
 		builderTag := "localhost:5000/capo-port-test-builder:v1"
 		digestRef := buildDigestOnlyImage(t, BuildDefinition{
 			Tag:                  builderTag,
-			ContainerfileContent: "FROM scratch\nCOPY go_syft.mod /opt/go.mod",
+			ContainerfileContent: "FROM scratch\nCOPY syfter /opt/syfter",
 			ContextDirectory:     "../testdata/image_content",
 		}, scanner.store, buildahBinary)
 
@@ -2143,18 +2081,14 @@ COPY --from=builder /opt/go.mod /opt/go.mod`, tagDigestRef),
 			TestImage: BuildDefinition{
 				ContainerfileContent: fmt.Sprintf(`FROM %s as builder
 FROM scratch
-COPY --from=builder /opt/go.mod /opt/go.mod`, tagDigestRef),
+COPY --from=builder /opt/syfter /opt/syfter`, tagDigestRef),
 				ContextDirectory: "../testdata/image_content",
 			},
 			ExpectedResult: PackageMetadata{
-				Packages: []PackageMetadataItem{
-					{
-						PackageURL: "pkg:golang/github.com/anchore/syft@v1.32.0",
-						OriginType: "builder",
-						Pullspec:   "localhost:5000/capo-port-test-builder@sha256:dummy",
-						StageAlias: "builder",
-					},
-				},
+				Packages: syfterBuilder.
+					ExpectedOriginType("builder").
+					ExpectedPullspec("localhost:5000/capo-port-test-builder@sha256:dummy").
+					ExpectedStageAlias("builder").Build(),
 			},
 		}
 		normalizeTestCaseTags(&tc)
