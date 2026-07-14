@@ -17,11 +17,6 @@ import (
 
 var sourceConfig = syft.DefaultGetSourceConfig().WithSources(sourceproviders.DirTag)
 
-var createSBOMConfig = syft.DefaultCreateSBOMConfig().
-	WithCatalogerSelection(
-		cataloging.NewSelectionRequest().WithDefaults(pkgcataloging.ImageTag),
-	)
-
 type SyftPackage struct {
 	PURL             string
 	DependencyOfPURL string
@@ -31,7 +26,9 @@ type SyftPackage struct {
 var ErrSyft = errors.New("syft error while scanning content")
 
 // Performs a syft scan on the root directory and returns a slice of SyftPackage structs.
-func SyftScan(root string) ([]SyftPackage, error) {
+// selectCatalogers accepts expressions in the same syntax as syft's --select-catalogers flag:
+// bare tag to sub-select, +name to add, -nameOrTag to remove.
+func SyftScan(root string, selectCatalogers []string) ([]SyftPackage, error) {
 	ctx := context.Background()
 
 	src, err := syft.GetSource(ctx, root, sourceConfig)
@@ -39,7 +36,14 @@ func SyftScan(root string) ([]SyftPackage, error) {
 		return []SyftPackage{}, fmt.Errorf("%w: %w", ErrSyft, err)
 	}
 
-	sbom, err := syft.CreateSBOM(ctx, src, createSBOMConfig)
+	cfg := syft.DefaultCreateSBOMConfig().
+		WithCatalogerSelection(
+			cataloging.NewSelectionRequest().
+				WithDefaults(pkgcataloging.ImageTag).
+				WithExpression(selectCatalogers...),
+		)
+
+	sbom, err := syft.CreateSBOM(ctx, src, cfg)
 	if err != nil {
 		return []SyftPackage{}, fmt.Errorf("%w: %w", ErrSyft, err)
 	}

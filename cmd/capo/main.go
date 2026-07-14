@@ -28,6 +28,8 @@ type args struct {
 	target string
 	// Named build contexts passed to the build
 	buildContexts map[string]string
+	// Cataloger selection expressions for syft (same syntax as syft --select-catalogers)
+	selectCatalogers []string
 }
 
 var ErrBuildArg = errors.New("invalid build args syntax")
@@ -81,6 +83,12 @@ func parseArgs() (args, error) {
 		},
 	)
 
+	selectCatalogersFlag := flag.String(
+		"select-catalogers",
+		"",
+		"Comma-separated cataloger selection expressions for syft (e.g. \"os,+rpm-db-cataloger,-python\").",
+	)
+
 	buildArgFile := flag.String(
 		"build-arg-file",
 		"",
@@ -108,12 +116,18 @@ func parseArgs() (args, error) {
 		return args{}, ErrNoContainerfile
 	}
 
+	var selectCatalogers []string
+	if *selectCatalogersFlag != "" {
+		selectCatalogers = strings.Split(*selectCatalogersFlag, ",")
+	}
+
 	return args{
 		containerfilePath: *cfPath,
 		target:            *target,
 		buildArgs:         buildArgs,
 		envVars:           buildEnvVars,
 		buildContexts:     buildContexts,
+		selectCatalogers:  selectCatalogers,
 	}, nil
 }
 
@@ -171,7 +185,10 @@ func main() {
 		Level: slog.LevelDebug,
 	}))
 
-	scanner, err := capo.NewScanner(capo.WithLogger(logger))
+	scanner, err := capo.NewScanner(
+		capo.WithLogger(logger),
+		capo.WithSelectCatalogers(args.selectCatalogers...),
+	)
 	if err != nil {
 		log.Fatalf("Failed to create scanner: %+v", err)
 	}
