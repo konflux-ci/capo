@@ -89,9 +89,10 @@ var ErrSBOMScan = errors.New("[ERR_SBOM_SCAN] SBOM scan failed")
 // Scanner exposes methods used for scanning of buildah image builds, assigning
 // image origins to SBOM packages present in a built image.
 type Scanner struct {
-	logger  *slog.Logger
-	sclient storageclient.Client
-	store   storage.Store
+	logger            *slog.Logger
+	sclient           storageclient.Client
+	store             storage.Store
+	selectCatalogers  []string
 }
 
 // Enable Scanner to use the functional options pattern for configuration
@@ -101,6 +102,14 @@ type Option func(*Scanner)
 func WithLogger(l *slog.Logger) Option {
 	return func(s *Scanner) {
 		s.logger = l
+	}
+}
+
+// Configure the scanner to pass a cataloger selection configuration option to
+// Syft for SBOM scanning. The expressions conform to the same pattern as Syft.
+func WithSelectCatalogers(expressions ...string) Option {
+	return func(s *Scanner) {
+		s.selectCatalogers = expressions
 	}
 }
 
@@ -124,6 +133,7 @@ func NewScanner(opts ...Option) (*Scanner, error) {
 		logger:  slog.Default(),
 		sclient: sclient,
 		store:   store,
+		selectCatalogers: []string{},
 	}
 
 	for _, o := range opts {
@@ -625,7 +635,7 @@ func (s *Scanner) scanDescendants(
 	if len(intermediate) > 0 {
 		s.logContent("intermediate (chained)", intermediate, node.alias)
 
-		intermediatePkgs, err := sbom.SyftScan(intermediateContentPath)
+		intermediatePkgs, err := sbom.SyftScan(intermediateContentPath, s.selectCatalogers)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan intermediate content for %q: %w", node.alias, err)
 		}
@@ -720,13 +730,13 @@ func (s *Scanner) scanSource(
 
 	var intermediatePkgs []sbom.SyftPackage
 	if intermediateContentPath != "" {
-		intermediatePkgs, err = sbom.SyftScan(intermediateContentPath)
+		intermediatePkgs, err = sbom.SyftScan(intermediateContentPath, s.selectCatalogers)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan intermediate content: %w: %w", err, ErrSBOMScan)
 		}
 	}
 
-	builderPkgs, err := sbom.SyftScan(builderContentPath)
+	builderPkgs, err := sbom.SyftScan(builderContentPath, s.selectCatalogers)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan builder content: %w: %w", err, ErrSBOMScan)
 	}

@@ -74,10 +74,13 @@ func prepareBinaries() error {
 	return nil
 }
 
-func createTestScanner() (*Scanner, error) {
+func createTestScanner(selectionRequest []string) (*Scanner, error) {
 	return NewScanner(
 		WithLogger(
 			slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		),
+		WithSelectCatalogers(
+			selectionRequest...
 		),
 	)
 }
@@ -130,6 +133,8 @@ type TestCase struct {
 	BuilderImages []BuildDefinition
 	// ExpectedResult is the expected scan output for comparison with capo output.
 	ExpectedResult PackageMetadata
+	// A syft cataloger selection request if any
+	SelectCatalogers []string
 }
 
 // getBuildahBinary returns the path to buildah binary to use for tests.
@@ -1975,15 +1980,39 @@ func TestIntegration(t *testing.T) {
 			},
 			ExpectedResult: PackageMetadata{Packages: []PackageMetadataItem{}},
 		},
-	}
-	scanner, err := createTestScanner()
-	if err != nil {
-		t.Fatalf("Failed to create scanner: %+v", err)
+		// Test that the syft selection request configured in the scanner is
+		// propagated to the syft scan. In this test, all go catalogers are
+		// skipped; this should result in empty packages at the end.
+		"syft selection request is propagated to the syft scan": {
+			TestImage: BuildDefinition{
+				ContainerfileContent: `FROM localhost/capo-builder/go_builder:latest as builder
+										FROM scratch
+										COPY --from=builder /opt/syfter /opt/syfter`,
+				ContextDirectory: "../testdata/image_content",
+			},
+			BuilderImages: []BuildDefinition{
+				{
+					Tag: "localhost/capo-builder/go_builder:latest",
+					ContainerfileContent: `FROM scratch
+											COPY syfter /opt/syfter`,
+					ContextDirectory: "../testdata/image_content",
+				},
+			},
+			SelectCatalogers: []string{"-go"},
+			ExpectedResult: PackageMetadata{
+				Packages: []PackageMetadataItem{},
+			},
+		},
 	}
 
 	buildahBinary := getBuildahBinary(t)
 
 	for name, tc := range testCases {
+		scanner, err := createTestScanner(tc.SelectCatalogers)
+		if err != nil {
+			t.Fatalf("Failed to create scanner: %+v", err)
+		}
+
 		t.Run(name, func(t *testing.T) {
 			if tc.SkipTestReason != "" {
 				t.Skip(tc.SkipTestReason)
@@ -2001,7 +2030,7 @@ func TestIntegration(t *testing.T) {
 // images stored under digest-only names (as buildah does after pulling with a
 // tag+digest ref).
 func TestIntegrationDigestLookup(t *testing.T) {
-	scanner, err := createTestScanner()
+	scanner, err := createTestScanner([]string{})
 	if err != nil {
 		t.Fatalf("Failed to create scanner: %+v", err)
 	}
@@ -2113,7 +2142,7 @@ func TestIntegrationScanErrors(t *testing.T) {
 		},
 	}
 
-	scanner, err := createTestScanner()
+	scanner, err := createTestScanner([]string{})
 	if err != nil {
 		t.Fatalf("Failed to create scanner: %+v", err)
 	}
