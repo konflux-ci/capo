@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/anchore/syft/syft/cataloging/pkgcataloging"
 	"github.com/konflux-ci/capo/internal/sbom"
 	"github.com/konflux-ci/capo/pkg/containerfile"
 	"github.com/konflux-ci/capo/pkg/storageclient"
@@ -92,7 +93,11 @@ type Scanner struct {
 	logger            *slog.Logger
 	sclient           storageclient.Client
 	store             storage.Store
+
+	// syft configuration
+	syftScanner sbom.SyftScanner
 	selectCatalogers  []string
+	defaultCatalogersTag string
 }
 
 // Enable Scanner to use the functional options pattern for configuration
@@ -107,9 +112,18 @@ func WithLogger(l *slog.Logger) Option {
 
 // Configure the scanner to pass a cataloger selection configuration option to
 // Syft for SBOM scanning. The expressions conform to the same pattern as Syft.
+// Configure the syft scanning to select catalogers according to an expr
 func WithSelectCatalogers(expressions ...string) Option {
 	return func(s *Scanner) {
 		s.selectCatalogers = expressions
+	}
+}
+
+// Configure the syft scanning to use a set of default catalogers based on a tag.
+// If not configured, the "image" tag is used as default.
+func WithDefaultCatalogersTag(tag string) Option {
+	return func (s *Scanner) {
+		s.defaultCatalogersTag = tag
 	}
 }
 
@@ -139,6 +153,15 @@ func NewScanner(opts ...Option) (*Scanner, error) {
 	for _, o := range opts {
 		o(s)
 	}
+
+	if s.defaultCatalogersTag == "" {
+		s.defaultCatalogersTag = pkgcataloging.ImageTag
+	}
+
+	s.syftScanner = sbom.NewSyftScanner(
+		sbom.WithSelectCatalogers(s.selectCatalogers...),
+		sbom.WithDefaultCatalogersTag(s.defaultCatalogersTag),
+	)
 
 	return s, nil
 }
@@ -188,6 +211,7 @@ func (s *Scanner) Scan(
 		return PackageMetadata{}, err
 	}
 	s.logPackageSources(packageSources)
+	s.logger.Debug("syft config", "defaultTag", s.defaultCatalogersTag, "selection", s.selectCatalogers)
 
 	for _, source := range packageSources {
 		items, err := s.scanBuilderStageTree(source)
@@ -635,7 +659,7 @@ func (s *Scanner) scanDescendants(
 	if len(intermediate) > 0 {
 		s.logContent("intermediate (chained)", intermediate, node.alias)
 
-		intermediatePkgs, err := sbom.SyftScan(intermediateContentPath, s.selectCatalogers)
+		intermediatePkgs, err := s.syftScanner.Scan(intermediateContentPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan intermediate content for %q: %w", node.alias, err)
 		}
@@ -730,13 +754,13 @@ func (s *Scanner) scanSource(
 
 	var intermediatePkgs []sbom.SyftPackage
 	if intermediateContentPath != "" {
-		intermediatePkgs, err = sbom.SyftScan(intermediateContentPath, s.selectCatalogers)
+		intermediatePkgs, err = s.syftScanner.Scan(intermediateContentPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan intermediate content: %w: %w", err, ErrSBOMScan)
 		}
 	}
 
-	builderPkgs, err := sbom.SyftScan(builderContentPath, s.selectCatalogers)
+	builderPkgs, err := s.syftScanner.Scan(builderContentPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan builder content: %w: %w", err, ErrSBOMScan)
 	}
