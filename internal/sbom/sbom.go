@@ -8,7 +8,6 @@ import (
 	"github.com/anchore/syft/syft"
 	"github.com/anchore/syft/syft/artifact"
 	"github.com/anchore/syft/syft/cataloging"
-	"github.com/anchore/syft/syft/cataloging/pkgcataloging"
 	"github.com/anchore/syft/syft/pkg"
 	"github.com/anchore/syft/syft/sbom"
 	"github.com/anchore/syft/syft/source/sourceproviders"
@@ -25,10 +24,52 @@ type SyftPackage struct {
 
 var ErrSyft = errors.New("syft error while scanning content")
 
-// Performs a syft scan on the root directory and returns a slice of SyftPackage structs.
-// selectCatalogers accepts expressions in the same syntax as syft's --select-catalogers flag:
+type SyftScanner struct {
+	config *syft.CreateSBOMConfig
+	selectCatalogers []string
+	defaultCatalogersTag string
+}
+
+type Option func(*SyftScanner)
+
+// WithSelectCatalogers accepts expressions in the same syntax as syft's --select-catalogers flag:
 // bare tag to sub-select, +name to add, -nameOrTag to remove.
-func SyftScan(root string, selectCatalogers []string) ([]SyftPackage, error) {
+func WithSelectCatalogers(selectCatalogers ...string) Option {
+	return func (s *SyftScanner) {
+		s.selectCatalogers = selectCatalogers
+	}
+}
+
+// WithDefaultCatalogersTag sets the tag of default catalogers to for scanning.
+func WithDefaultCatalogersTag(tag string) Option {
+	return func (s *SyftScanner) {
+		s.defaultCatalogersTag = tag
+	}
+}
+
+// Create a new SyftScanner with the provided options.
+func NewSyftScanner(opts ...Option) SyftScanner {
+	s := SyftScanner{
+		selectCatalogers: []string{},
+	}
+
+	for _, o := range opts {
+		o(&s)
+	}
+
+	cfg := syft.DefaultCreateSBOMConfig().
+		WithCatalogerSelection(
+			cataloging.NewSelectionRequest().
+				WithDefaults(s.defaultCatalogersTag).
+				WithExpression(s.selectCatalogers...),
+		)
+
+	s.config = cfg
+	return s
+}
+
+// Performs a syft scan on the root directory and returns a slice of SyftPackage structs.
+func (s *SyftScanner) Scan(root string) ([]SyftPackage, error) {
 	ctx := context.Background()
 
 	src, err := syft.GetSource(ctx, root, sourceConfig)
@@ -36,14 +77,7 @@ func SyftScan(root string, selectCatalogers []string) ([]SyftPackage, error) {
 		return []SyftPackage{}, fmt.Errorf("%w: %w", ErrSyft, err)
 	}
 
-	cfg := syft.DefaultCreateSBOMConfig().
-		WithCatalogerSelection(
-			cataloging.NewSelectionRequest().
-				WithDefaults(pkgcataloging.ImageTag).
-				WithExpression(selectCatalogers...),
-		)
-
-	sbom, err := syft.CreateSBOM(ctx, src, cfg)
+	sbom, err := syft.CreateSBOM(ctx, src, s.config)
 	if err != nil {
 		return []SyftPackage{}, fmt.Errorf("%w: %w", ErrSyft, err)
 	}
