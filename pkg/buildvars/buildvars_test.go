@@ -3,159 +3,148 @@
 package buildvars
 
 import (
+	"errors"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 )
 
-func TestParseBuildArgFile(t *testing.T) {
-	t.Parallel()
-	content := `# This is a comment
-FOO=bar
+type parseAndMergeTC struct {
+	fileContents []string
+	buildArgs    []string
+	env          map[string]string
+	expected     map[string]string
+	wantErr      error
+}
 
-BAZ=qux
-# Another comment
-DUP=first
-DUP=second
-EQUALS=a=b=c
-`
-	dir := t.TempDir()
-	path := filepath.Join(dir, "args.conf")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
+func TestParseAndMerge(t *testing.T) {
+	testCases := map[string]parseAndMergeTC{
+		"one buildargfile": {
+			fileContents: []string {
+				"foo=bar\nbar=baz",
+			},
+			expected: map[string]string{
+				"foo": "bar",
+				"bar": "baz",
+			},
+		},
+		"multiple buildargfiles": {
+			fileContents: []string {
+				"foo=bar\nbar=baz\nboo=see\n",
+				"foo=baz", // overrides foo from previous file
+				"boo", // deletes the boo key from previous file
+			},
+			expected: map[string]string{
+				"foo": "baz",
+				"bar": "baz",
+			},
+		},
+		"just buildargs": {
+			buildArgs: []string {
+				"foo=bar", "bar=baz",
+			},
+			expected: map[string]string{
+				"foo": "bar",
+				"bar": "baz",
+			},
+		},
+		"buildarg overrides": {
+			fileContents: []string {
+				"foo=bar\nbar=baz\n",
+			},
+			buildArgs: []string {
+				"foo=baz", // overrides file
+				"bar",     // deletes the key
+				"goo=zamp",
+				"goo=ximp", // overrides previous buildarg
+			},
+			expected: map[string]string{
+				"foo": "baz",
+				"goo": "ximp",
+			},
+		},
+		"env resolve": {
+			fileContents: []string {
+				"foo\n",
+			},
+			buildArgs: []string {
+				"bar",
+			},
+			env: map[string]string {
+				"foo": "baz",
+				"bar": "ximp",
+			},
+			expected: map[string]string{
+				"foo": "baz",
+				"bar": "ximp",
+			},
+		},
+		"invalid line in build arg file": {
+			fileContents: []string{
+				"=value\n",
+			},
+			wantErr: ErrInvalidBuildArg,
+		},
+		"invalid build arg": {
+			buildArgs: []string{
+				"=value",
+			},
+			wantErr: ErrInvalidBuildArg,
+		},
 	}
 
-	args, err := ParseBuildArgFile(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	for name, tc := range testCases {
+		dir := t.TempDir()
+		var buildArgFiles []string
+		for _, fileContent := range tc.fileContents {
+			f, err := os.CreateTemp(dir, "argfile")
+			if err != nil {
+				t.Fatalf("failed to create tempdir")
+			}
 
-	expected := map[string]string{
-		"FOO":    "bar",
-		"BAZ":    "qux",
-		"DUP":    "second",
-		"EQUALS": "a=b=c",
-	}
+			_, err = f.WriteString(fileContent)
+			if err != nil {
+				t.Fatalf("failed write to prepare build arg file")
+			}
+			f.Close()
+			buildArgFiles = append(buildArgFiles, f.Name())
+		}
 
-	if diff := cmp.Diff(expected, args); diff != "" {
-		t.Errorf("ParseBuildArgFile() mismatch (-want +got):\n%s", diff)
+		t.Run(name, func(t *testing.T){
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+
+			res, err := ParseAndMerge(buildArgFiles, tc.buildArgs)
+			if tc.wantErr != nil {
+				if err == nil {
+					t.Fatalf("expected error wrapping %v, got nil", tc.wantErr)
+				}
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("expected error wrapping %v, got: %v", tc.wantErr, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			diff := cmp.Diff(tc.expected, res)
+			if diff != "" {
+				t.Errorf("ParseAndMerge returned unexpected result (-want +got): \n%s", diff)
+			}
+		})
 	}
 }
 
-func TestParseBuildArgFileNotFound(t *testing.T) {
+func TestParseAndMergeNonexistentFile(t *testing.T) {
 	t.Parallel()
-	_, err := ParseBuildArgFile("/nonexistent/path")
+	_, err := ParseAndMerge([]string{"/nonexistent/path"}, nil)
 	if err == nil {
 		t.Fatal("expected error for nonexistent file")
 	}
-}
-
-func TestParseBuildArgFileInvalidLine(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "bad.conf")
-	if err := os.WriteFile(path, []byte("=value\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := ParseBuildArgFile(path)
-	if err == nil {
-		t.Fatal("expected error for empty key")
-	}
-}
-
-func TestParseBuildArgFileBareKeyInheritsFromEnv(t *testing.T) {
-	t.Setenv("INHERIT_ME", "from-env")
-
-	content := "EXPLICIT=value\nINHERIT_ME\n"
-	dir := t.TempDir()
-	path := filepath.Join(dir, "args.conf")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	args, err := ParseBuildArgFile(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected := map[string]string{
-		"EXPLICIT":   "value",
-		"INHERIT_ME": "from-env",
-	}
-	if diff := cmp.Diff(expected, args); diff != "" {
-		t.Errorf("ParseBuildArgFile() mismatch (-want +got):\n%s", diff)
-	}
-}
-
-func TestParseBuildArgFileBareKeyDeletedWhenNotInEnv(t *testing.T) {
-	t.Parallel()
-
-	content := "KEEP=value\nNOT_IN_ENV\n"
-	dir := t.TempDir()
-	path := filepath.Join(dir, "args.conf")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	args, err := ParseBuildArgFile(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected := map[string]string{
-		"KEEP": "value",
-	}
-	if diff := cmp.Diff(expected, args); diff != "" {
-		t.Errorf("ParseBuildArgFile() mismatch (-want +got):\n%s", diff)
-	}
-}
-
-func TestParseBuildArgFileExplicitEmptyStaysEmpty(t *testing.T) {
-	t.Setenv("EMPTY_KEY", "should-not-be-used")
-
-	content := "EMPTY_KEY=\n"
-	dir := t.TempDir()
-	path := filepath.Join(dir, "args.conf")
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	args, err := ParseBuildArgFile(path)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	expected := map[string]string{
-		"EMPTY_KEY": "",
-	}
-	if diff := cmp.Diff(expected, args); diff != "" {
-		t.Errorf("ParseBuildArgFile() mismatch (-want +got):\n%s", diff)
-	}
-}
-
-func TestMergeBuildArgs(t *testing.T) {
-	t.Parallel()
-	fileArgs := map[string]string{
-		"A": "from-file",
-		"B": "from-file",
-	}
-	cliArgs := map[string]string{
-		"B": "from-cli",
-		"C": "from-cli",
-	}
-
-	merged := MergeBuildArgs(fileArgs, cliArgs)
-
-	expected := map[string]string{
-		"A": "from-file",
-		"B": "from-cli",
-		"C": "from-cli",
-	}
-
-	if diff := cmp.Diff(expected, merged); diff != "" {
-		t.Errorf("MergeBuildArgs() mismatch (-want +got):\n%s", diff)
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected error wrapping os.ErrNotExist, got: %v", err)
 	}
 }

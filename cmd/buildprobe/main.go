@@ -37,7 +37,9 @@ type args struct {
 	// Path to the containerfile to parse
 	containerfilePath string
 	// Build arguments passed to buildah for the build
-	buildArgs map[string]string
+	buildArgs []string
+	// Build arg files passed to buildah for the build
+	buildArgFiles []string
 	// Environment variables passed to the build
 	envVars map[string]string
 	// Target stage of the buildah build
@@ -46,7 +48,6 @@ type args struct {
 	buildContexts map[string]string
 }
 
-var ErrBuildArg = errors.New("invalid build args syntax")
 var ErrBuildContext = errors.New("invalid build context syntax, expected name=value")
 var ErrBuildEnv = errors.New("invalid build env syntax")
 var ErrNoContainerfile = errors.New("containerfile argument is required")
@@ -67,14 +68,28 @@ func parseArgs() (args, error) {
 		"Path to the Containerfile used in the build. Required.",
 	)
 
-	cliArgs := make(map[string]string)
+	var buildArgs []string
 	flag.Func(
 		"build-arg",
 		"Build argument in the form KEY=VALUE or bare KEY (inherits from environment). Can be used multiple times.",
 		func(s string) error {
-			if err := buildvars.ReadBuildVariable(s, cliArgs); err != nil {
-				return ErrBuildArg
-			}
+			buildArgs = append(buildArgs, s)
+			return nil
+		},
+	)
+
+	var buildArgFiles []string
+	flag.Func(
+		"build-arg-file",
+		strings.Join(
+			[]string{
+				"Path to a file of build arguments (one KEY=VALUE per line). ",
+				"Read before --build-arg values. Can be used multiple times.",
+			},
+			"",
+		),
+		func(s string) error {
+			buildArgFiles = append(buildArgFiles, s)
 			return nil
 		},
 	)
@@ -110,24 +125,7 @@ func parseArgs() (args, error) {
 		"Build target passed to buildah, if any.",
 	)
 
-	buildArgFile := flag.String(
-		"build-arg-file",
-		"",
-		"Path to a file of build arguments (one KEY=VALUE per line). Read before --build-arg values.",
-	)
-
 	flag.Parse()
-
-	var buildArgs map[string]string
-	if *buildArgFile != "" {
-		fileArgs, err := buildvars.ParseBuildArgFile(*buildArgFile)
-		if err != nil {
-			return args{}, fmt.Errorf("parsing build-arg-file: %w", err)
-		}
-		buildArgs = buildvars.MergeBuildArgs(fileArgs, cliArgs)
-	} else {
-		buildArgs = cliArgs
-	}
 
 	if *cfPath == "" {
 		flag.Usage()
@@ -144,6 +142,7 @@ func parseArgs() (args, error) {
 		containerfilePath: *cfPath,
 		target:            *target,
 		buildArgs:         buildArgs,
+		buildArgFiles:     buildArgFiles,
 		envVars:           cliEnv,
 		buildContexts:     buildContexts,
 	}, nil
@@ -167,6 +166,11 @@ func main() {
 		}
 	}()
 
+	buildArgs, err := buildvars.ParseAndMerge(args.buildArgFiles, args.buildArgs)
+	if err != nil {
+		log.Fatalf("Failed to parse build args: %+v", err)
+	}
+
 	client, err := storageclient.DefaultBuildahClient()
 	if err != nil {
 		log.Fatalf("Could not create storage client: %s", err)
@@ -176,7 +180,7 @@ func main() {
 		Containerfile: cfReader,
 		Target:        args.target,
 		Tag:           args.tag,
-		Args:          args.buildArgs,
+		Args:          buildArgs,
 		EnvVars:       args.envVars,
 		BuildContexts: args.buildContexts,
 	}, client)

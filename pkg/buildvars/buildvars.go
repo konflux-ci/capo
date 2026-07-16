@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"strings"
 )
@@ -47,13 +46,15 @@ func parseBuildVarLine(s string) (key string, value string, hasValue bool, err e
 	return k, v, true, nil
 }
 
-// ParseBuildArgFile reads a file of build arguments, one KEY=VALUE per line.
+// parseBuildArgFile reads a file of build arguments, one KEY=VALUE per line.
 // Blank lines and lines starting with '#' are ignored.
 // When the same key appears multiple times, the last value wins.
-func ParseBuildArgFile(path string) (result map[string]string, err error) {
+// buildah semantics: KEY=VALUE stores the literal value (even if empty),
+// bare KEY inherits from the host environment (or deletes the key if unset).
+func parseBuildArgFile(path string, vars map[string]string) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, fmt.Errorf("opening build-arg-file: %w", err)
+		return fmt.Errorf("opening build-arg-file: %w", err)
 	}
 	defer func() {
 		if cerr := f.Close(); cerr != nil && err == nil {
@@ -61,27 +62,44 @@ func ParseBuildArgFile(path string) (result map[string]string, err error) {
 		}
 	}()
 
-	args := make(map[string]string)
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if err := ReadBuildVariable(line, args); err != nil {
-			return nil, fmt.Errorf("in %s: %w", path, err)
+		if err := ReadBuildVariable(line, vars); err != nil {
+			return fmt.Errorf("in %s: %w", path, err)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading %s: %w", path, err)
+		return fmt.Errorf("reading %s: %w", path, err)
 	}
-	return args, nil
+	return nil
 }
 
-// MergeBuildArgs merges file args with CLI args. CLI args take precedence.
-func MergeBuildArgs(fileArgs, cliArgs map[string]string) map[string]string {
-	merged := make(map[string]string, len(fileArgs)+len(cliArgs))
-	maps.Copy(merged, fileArgs)
-	maps.Copy(merged, cliArgs)
-	return merged
+// ParseAndMerge parses the passed buildArgFiles and buildArgs and merges them
+// according to buildah's logic.
+// BuildArgFiles are read before buildArgs, so buildArgs always have priority.
+// Multiple buildArgs are parsed according to the order provided, so the later
+// buildArgs have priority.
+// Also handles resolving args from env for bare keys.
+func ParseAndMerge(buildArgFiles []string, buildArgs []string) (map[string]string, error) {
+	args := make(map[string]string)
+
+	for _, fpath := range buildArgFiles {
+		err := parseBuildArgFile(fpath, args)
+		if err != nil {
+			return args, fmt.Errorf("failed to parse file %q: %w", fpath, err)
+		}
+	}
+
+	for _, bArg := range buildArgs {
+		err := ReadBuildVariable(bArg, args)
+		if err != nil {
+			return args, fmt.Errorf("failed to parse build variable %q: %w", bArg, err)
+		}
+	}
+
+	return args, nil
 }
