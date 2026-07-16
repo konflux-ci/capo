@@ -6,12 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"path/filepath"
 	"strings"
 
 	"github.com/opencontainers/go-digest"
 	"go.podman.io/image/v5/docker/reference"
 	"go.podman.io/storage"
+	"go.podman.io/storage/pkg/homedir"
 	"go.podman.io/storage/pkg/reexec"
+	"go.podman.io/storage/pkg/unshare"
 )
 
 // Transports that prefix a docker-reference resolvable via store.Lookup.
@@ -99,6 +103,53 @@ var ErrBuildahStorageSetup = errors.New("error while setting up buildah storage"
 // get the config object of an image.
 var ErrOCIImageConfig = errors.New("could not get config for image")
 
+// FixRootlessStoreOptions works around a storage v1.63.0 config loading change
+// (https://github.com/podman-container-tools/container-libs/pull/680) where
+// system storage.conf values (runroot, graphroot, additionalimagestores)
+// unconditionally overwrite rootless defaults with root-only paths. The new
+// design expects distributions to ship rootless drop-in configs
+// (/etc/containers/storage.rootless.conf.d/) but Fedora does not yet.
+// Must be called after storage.DefaultStoreOptions().
+//
+// In Konflux pipeline, KBC runs as root (UID 0) under "unshare --map-root-user",
+// IsRootless() returns false, and this function is a no-op — root paths from
+// storage.conf are correct because /var/lib/containers is a mounted volume.
+//
+// In local development, capo runs under "buildah unshare" (rootless),
+// IsRootless() returns true, and we re-apply rootless-safe paths. These are
+// the same values that storage.setDefaultRootlessStoreOptions sets before
+// the system config overwrites them.
+//
+// When distributions ship rootless drop-in configs, DefaultStoreOptions() will
+// return correct rootless paths — overwriting them with the same values is
+// idempotent.
+func FixRootlessStoreOptions(opts *storage.StoreOptions) {
+	// No-op for root: storage.conf paths (/var/lib/containers, /run/containers)
+	// are correct and writable when running as root in the pipeline.
+	if !unshare.IsRootless() {
+		slog.Debug("storage: running as root, using default store options",
+			"RunRoot", opts.RunRoot, "GraphRoot", opts.GraphRoot)
+		return
+	}
+	slog.Debug("storage: running rootless, fixing store options",
+		"original.RunRoot", opts.RunRoot, "original.GraphRoot", opts.GraphRoot)
+	// Re-apply rootless RunRoot: XDG_RUNTIME_DIR/containers
+	// (e.g. /run/user/1000/containers instead of /run/containers/storage)
+	if rootlessRuntime, err := homedir.GetRuntimeDir(); err == nil {
+		opts.RunRoot = filepath.Join(rootlessRuntime, "containers")
+	}
+	// Re-apply rootless GraphRoot: XDG_DATA_HOME/containers/storage
+	// (e.g. ~/.local/share/containers/storage instead of /var/lib/containers/storage)
+	if dataHome, err := homedir.GetDataHome(); err == nil {
+		opts.GraphRoot = filepath.Join(dataHome, "containers", "storage")
+	}
+	// Clear driver options — they may contain additionalimagestores with
+	// root-only paths (e.g. /usr/lib/containers/storage) from system config.
+	opts.GraphDriverOptions = nil
+	slog.Debug("storage: rootless store options applied",
+		"RunRoot", opts.RunRoot, "GraphRoot", opts.GraphRoot)
+}
+
 // DefaultBuildahClient creates a Client using the default
 // containers/storage location.
 func DefaultBuildahClient() (Client, error) {
@@ -112,6 +163,8 @@ func DefaultBuildahClient() (Client, error) {
 		return nil,
 			fmt.Errorf("%w: failed to create default storage options: %w", ErrBuildahStorageSetup, err)
 	}
+
+	FixRootlessStoreOptions(&opts)  //TODO uncomment
 
 	store, err := storage.GetStore(opts)
 	if err != nil {

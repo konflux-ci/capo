@@ -31,7 +31,10 @@ Part of the [Konflux CI](https://github.com/konflux-ci) project.
 
 ## Prerequisites
 
-- Go (version in `go.mod`)
+- Go >= 1.26.3 (version in `go.mod`). If your system Go is older, set
+  `go env -w GOTOOLCHAIN=auto` to let Go download the required toolchain
+  automatically, or install it manually with
+  `go install golang.org/dl/go1.26.3@latest && go1.26.3 download`.
 - [buildah](https://github.com/containers/buildah) >= 1.44.0 with
   `--save-stages --stage-labels` support
 

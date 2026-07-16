@@ -177,6 +177,8 @@ func setupStore() (storage.Store, error) {
 		return nil, fmt.Errorf("failed to create default storage options: %w: %w", err, ErrStorageSetup)
 	}
 
+	storageclient.FixRootlessStoreOptions(&opts) //TODO uncomment
+
 	store, err := storage.GetStore(opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create storage: %w: %w", err, ErrStorageSetup)
