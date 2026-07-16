@@ -3,10 +3,34 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/magefile/mage/sh"
 )
+
+func init() {
+	// Since containers/storage v1.63, buildah unshare fails if the only
+	// storage config on the system sets root-only paths.
+	const storageConf = "/etc/containers/storage.conf"
+	if os.Getuid() != 0 {
+		if _, err := os.Stat(storageConf); os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, `
+WARNING: %s does not exist.
+Local rootless development (buildah unshare) may fail with "permission denied".
+To fix, create it with:
+
+    sudo mkdir -p /etc/containers
+    sudo tee /etc/containers/storage.conf <<< '[storage]
+    driver = "overlay"'
+
+(Note: other drivers are not guaranteed to work with capo for now.)
+
+`, storageConf)
+		}
+	}
+}
 
 var Default = Build
 var CapoPackage = "./cmd/capo"
