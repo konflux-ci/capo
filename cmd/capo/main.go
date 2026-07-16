@@ -21,7 +21,9 @@ type args struct {
 	// Path to the containerfile to parse
 	containerfilePath string
 	// Build arguments passed to buildah for the build
-	buildArgs map[string]string
+	buildArgs []string
+	// Build arg files passed to buildah for the build
+	buildArgFiles []string
 	// Environment variables passed to the build
 	envVars map[string]string
 	// Target stage of the buildah build
@@ -32,7 +34,6 @@ type args struct {
 	selectCatalogers []string
 }
 
-var ErrBuildArg = errors.New("invalid build args syntax")
 var ErrBuildContext = errors.New("invalid build context syntax, expected name=value")
 var ErrEnvVar = errors.New("invalid environment variable syntax")
 var ErrNoContainerfile = errors.New("containerfile argument is required")
@@ -46,17 +47,27 @@ func parseArgs() (args, error) {
 		"Path to the Containerfile used in the build. Required.",
 	)
 
-	buildArgs := make(map[string]string)
+	var buildArgs []string
 	flag.Func(
 		"build-arg",
 		"Build argument in the form KEY=VALUE or bare KEY (inherits from environment). Can be used multiple times.",
 		func(s string) error {
-			if err := buildvars.ReadBuildVariable(s, buildArgs); err != nil {
-				return ErrBuildArg
-			}
+			buildArgs = append(buildArgs, s)
 			return nil
 		},
 	)
+
+	var buildArgFiles []string
+	flag.Func(
+		"build-arg-file",
+		"Path to a file of build arguments (one KEY=VALUE per line). " +
+		"Read before --build-arg values. Can be used multiple times.",
+		func (s string) error {
+			buildArgFiles = append(buildArgFiles, s)
+			return nil
+		},
+	)
+
 	buildEnvVars := make(map[string]string)
 	flag.Func(
 		"env",
@@ -89,12 +100,6 @@ func parseArgs() (args, error) {
 		"Comma-separated cataloger selection expressions for syft (e.g. \"os,+rpm-db-cataloger,-python\").",
 	)
 
-	buildArgFile := flag.String(
-		"build-arg-file",
-		"",
-		"Path to a file of build arguments (one KEY=VALUE per line). Read before --build-arg values.",
-	)
-
 	target := flag.String(
 		"target",
 		"",
@@ -102,14 +107,6 @@ func parseArgs() (args, error) {
 	)
 
 	flag.Parse()
-
-	if *buildArgFile != "" {
-		fileArgs, err := buildvars.ParseBuildArgFile(*buildArgFile)
-		if err != nil {
-			return args{}, fmt.Errorf("parsing build-arg-file: %w", err)
-		}
-		buildArgs = buildvars.MergeBuildArgs(fileArgs, buildArgs)
-	}
 
 	if *cfPath == "" {
 		flag.Usage()
@@ -125,6 +122,7 @@ func parseArgs() (args, error) {
 		containerfilePath: *cfPath,
 		target:            *target,
 		buildArgs:         buildArgs,
+		buildArgFiles:     buildArgFiles,
 		envVars:           buildEnvVars,
 		buildContexts:     buildContexts,
 		selectCatalogers:  selectCatalogers,
@@ -133,13 +131,19 @@ func parseArgs() (args, error) {
 
 // Build buildah-specific arguments from capo commandline arguments.
 // These are used in the containerfile parser.
-func buildOptsFromArgs(args args) containerfile.BuildOptions {
+func buildOptsFromArgs(args args) (containerfile.BuildOptions, error) {
+	buildArgs, err := buildvars.ParseAndMerge(args.buildArgFiles, args.buildArgs)
+	if err != nil {
+		return containerfile.BuildOptions{},
+			fmt.Errorf("failed to parse build args: %w", err)
+	}
+
 	return containerfile.BuildOptions{
-		Args:          args.buildArgs,
+		Args:          buildArgs,
 		EnvVars:       args.envVars,
 		Target:        args.target,
 		BuildContexts: args.buildContexts,
-	}
+	}, nil
 }
 
 func logRevision() {
@@ -175,7 +179,12 @@ func main() {
 		}
 	}()
 
-	cf, err := containerfile.Parse(r, buildOptsFromArgs(args))
+	buildOpts, err := buildOptsFromArgs(args)
+	if err != nil {
+		log.Fatalf("Failed to create build options: %+v", err)
+	}
+
+	cf, err := containerfile.Parse(r, buildOpts)
 	if err != nil {
 		log.Fatalf("Failed to parse containerfile %+v", err)
 	}
