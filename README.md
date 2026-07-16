@@ -37,6 +37,17 @@ Part of the [Konflux CI](https://github.com/konflux-ci) project.
   `go install golang.org/dl/go1.26.3@latest && go1.26.3 download`.
 - [buildah](https://github.com/containers/buildah) >= 1.44.0 with
   `--save-stages --stage-labels` support
+- Rootless storage config (Fedora): since containers/storage v1.63,
+  `buildah unshare` may fail with "permission denied" if the only storage
+  config on the system sets root-only paths. Fix by creating a minimal
+  `/etc/containers/storage.conf`:
+  ```sh
+  sudo mkdir -p /etc/containers
+  echo -e '[storage]\ndriver = "overlay"' | sudo tee /etc/containers/storage.conf
+  ```
+  Note: Other drivers (e.g. `"vfs"`) are not guaranteed to work with capo.
+  This is not needed in Konflux pipeline (runs as root), github CI or when your
+  distribution ships Podman 6+ with `containers-common` >= 0.68.
 
 ## Quickstart
 
