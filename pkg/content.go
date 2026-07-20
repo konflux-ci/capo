@@ -108,11 +108,11 @@ func (s *Scanner) getDescendantContent(
 	sources []string,
 	contentPath string,
 ) (*storage.Image, []string, error) {
-	intermediateImage, found, err := s.findIntermediateImage(stageAlias)
+	intermediateImage, err := s.findIntermediateImage(stageAlias)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: failed to find intermediate image for %q: %w", ErrStorage, stageAlias, err)
 	}
-	if !found {
+	if intermediateImage == nil {
 		// no intermediate image found for node - pass diffBase through unchanged
 		s.logger.Debug("no intermediate image found for chained stage, skipping", "stage", stageAlias)
 		return diffBase, nil, nil
@@ -276,11 +276,11 @@ func (s *Scanner) getIntermediateContent(
 	path string,
 ) ([]string, error) {
 	// Find intermediate image using buildah stage labels
-	intermediateImage, found, err := s.findIntermediateImage(stageAlias)
+	intermediateImage, err := s.findIntermediateImage(stageAlias)
 	if err != nil {
 		return []string{}, fmt.Errorf("failed to find intermediate image: %w: %w", err, ErrStorage)
 	}
-	if !found {
+	if intermediateImage == nil {
 		// No intermediate image for this stage
 		return []string{}, nil
 	}
@@ -374,20 +374,21 @@ func (s *Scanner) saveDiff(
 
 // findIntermediateImage looks up an intermediate image by stage alias.
 // Iterates all unnamed images in the store, validates buildah version and
-// stage label presence on each, but defers errors until the full iteration
-// completes, so a valid match is returned even if other images in the
-// store are invalid. Returns all accumulated errors only if no match
-// is found.
+// stage label presence on each.
+// An error will be returned if image config retrieval fails.
+// The logger will emit warnings for missing stage labels, older buildah
+// versions and missing intermediate images. These warnings might not mean
+// something went wrong in the process, the intermediate image retrieval is
+// unfortunately a little non-robust right now.
 func (s *Scanner) findIntermediateImage(
 	stageAlias string,
-) (*storage.Image, bool, error) {
+) (*storage.Image, error) {
 
 	images, err := s.store.Images()
 	if err != nil {
-		return nil, false, fmt.Errorf("failed to list images: %w: %w", err, ErrStorage)
+		return nil, fmt.Errorf("failed to list images: %w: %w", err, ErrStorage)
 	}
 
-	var errs []error
 	for i := range images {
 		if len(images[i].Names) != 0 {
 			continue
@@ -395,51 +396,42 @@ func (s *Scanner) findIntermediateImage(
 
 		cfg, err := s.sclient.GetImageConfig(images[i].ID)
 		if err != nil {
-			errs = append(errs, fmt.Errorf(
+			return nil, fmt.Errorf(
 				"getting image config for intermediate image %s: %w: %w",
 				images[i].ID, err, ErrStorage,
-			))
-			continue
+			)
 		}
 
 		if err := checkBuildahVersionFromImage(cfg.Config.Labels); err != nil {
-			errs = append(errs, fmt.Errorf(
-				"intermediate image %s: %w, "+
-					"ensure buildah >= %s is used for the build and consider using "+
-					"a clean image storage to avoid interference from previous builds",
-				images[i].ID, err, MinBuildahVersion,
-			))
+			s.logger.Warn(
+				"intermediate image built by old version of buildah; ensure buildah 1.44.0 and higher is used  " +
+				"and consider using a clean image storage to avoid interference from previous builds",
+				"imageID", images[i].ID,
+			)
 			continue
 		}
 
-		stageName, hasStageLabel := cfg.Config.Labels["io.buildah.stage.name"]
-		if !hasStageLabel {
-			errs = append(errs, fmt.Errorf(
-				"intermediate image %s (buildah %s) is missing io.buildah.stage.name label, "+
-					"make sure to pass --save-stages --stage-labels to the buildah build command: %w",
-				images[i].ID, cfg.Config.Labels["io.buildah.version"], ErrMissingStageLabel,
-			))
-			continue
-		}
-
-		if stageName == stageAlias {
+		stageName := cfg.Config.Labels["io.buildah.stage.name"]
+		switch stageName {
+		case stageAlias: {
 			s.logger.Debug("found intermediate image", "imageID", images[i].ID, "stage", stageAlias)
-			return &images[i], true, nil
+			return &images[i], nil
+		}
+		case "": {
+			s.logger.Warn(
+				"io.buildah.stage.name label is missing for image",
+				"imageID", images[i].ID,
+			)
+		}
 		}
 	}
 
-	if len(errs) > 0 {
-		return nil, false, fmt.Errorf(
-			"no intermediate image found for stage %q; encountered %d problematic image(s) in storage:\n%w: %w",
-			stageAlias, len(errs), errors.Join(errs...), ErrStorage,
-		)
-	}
-	s.logger.Debug("no intermediate image found for stage",
+	s.logger.Warn("no intermediate image found for stage",
 		"stage", stageAlias,
 		"hint", "expected if the stage has no filesystem-changing instructions; "+
 			"if it does, ensure the build used --save-stages --stage-labels flags",
 	)
-	return nil, false, nil
+	return nil, nil
 }
 
 func checkBuildahVersionFromImage(labels map[string]string) error {

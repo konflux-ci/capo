@@ -598,8 +598,8 @@ func (s *Scanner) scanBuilderStageTree(
 
 		// root's intermediate image — use as initial diff base if it exists
 		rootDiffBase := builderBaseImage
-		rootIntermediate, found, _ := s.findIntermediateImage(root.alias)
-		if found {
+		rootIntermediate, _ := s.findIntermediateImage(root.alias)
+		if rootIntermediate != nil {
 			rootDiffBase = rootIntermediate
 		}
 
