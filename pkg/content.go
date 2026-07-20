@@ -412,20 +412,20 @@ func (s *Scanner) findIntermediateImage(
 			continue
 		}
 
-		stageName, hasStageLabel := cfg.Config.Labels["io.buildah.stage.name"]
-		if !hasStageLabel {
-			errs = append(errs, fmt.Errorf(
-				"intermediate image %s (buildah %s) is missing io.buildah.stage.name label, "+
-					"make sure to pass --save-stages --stage-labels to the buildah build command: %w",
-				images[i].ID, cfg.Config.Labels["io.buildah.version"], ErrMissingStageLabel,
-			))
-			continue
-		}
-
+		stageName, _ := cfg.Config.Labels["io.buildah.stage.name"]
 		if stageName == stageAlias {
 			s.logger.Debug("found intermediate image", "imageID", images[i].ID, "stage", stageAlias)
 			return &images[i], true, nil
 		}
+
+		//if !hasStageLabel {
+		//	errs = append(errs, fmt.Errorf(
+		//		"intermediate image %s (buildah %s) is missing io.buildah.stage.name label, "+
+		//			"make sure to pass --save-stages --stage-labels to the buildah build command: %w",
+		//		images[i].ID, cfg.Config.Labels["io.buildah.version"], ErrMissingStageLabel,
+		//	))
+		//	continue
+		//}
 	}
 
 	if len(errs) > 0 {
