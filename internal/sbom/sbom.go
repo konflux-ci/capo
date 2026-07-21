@@ -99,7 +99,7 @@ func getTopLevelPackages(sbom *sbom.SBOM) []SyftPackage {
 
 	idToPackage := getIdToPackageMap(sbom)
 	for pkg := range sbom.Artifacts.Packages.Enumerate() {
-		if !topLevelPkgIds[pkg.ID()] {
+		if !topLevelPkgIds[pkg.ID()] || pkg.PURL == "" {
 			continue
 		}
 
