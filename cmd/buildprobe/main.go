@@ -192,7 +192,7 @@ func main() {
 		Args:             buildArgs,
 		EnvVars:          args.envVars,
 		BuildContexts:    args.buildContexts,
-		SkipUnusedStages: args.skipUnusedStages,
+		SkipUnusedStages: &args.skipUnusedStages,
 	}, client)
 	if err != nil {
 		log.Fatalf("Failed to probe build metadata %+v", err)
