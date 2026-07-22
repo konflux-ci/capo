@@ -47,8 +47,8 @@ type ProbeOpts struct {
 	// Named build contexts passed to the build
 	BuildContexts map[string]string
 	// In multi-stage builds, skip stages that don't contribute to the final
-	// stage
-	SkipUnusedStages bool
+	// stage. If is equal to nil, defaults to true.
+	SkipUnusedStages *bool
 }
 
 // ErrParseContainerfile is returned when the Containerfile cannot be parsed.
@@ -89,7 +89,7 @@ func Probe(opts ProbeOpts, client storageclient.Client) (BuildMetadata, error) {
 	// If SkipUnusedStages == false, all stages up to and including the target
 	// will be built by buildah.
 	reachable := cf.Stages
-	if opts.SkipUnusedStages {
+	if opts.SkipUnusedStages == nil || *opts.SkipUnusedStages {
 		reachable = reachableStages(cf.Stages)
 	}
 
