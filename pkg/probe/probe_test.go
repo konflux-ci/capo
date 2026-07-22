@@ -32,6 +32,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
@@ -63,6 +64,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
@@ -92,6 +94,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
@@ -122,6 +125,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
@@ -151,6 +155,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
@@ -175,6 +180,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
@@ -198,6 +204,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
@@ -225,6 +232,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
@@ -253,6 +261,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
@@ -285,6 +294,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
@@ -315,6 +325,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
@@ -345,6 +356,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/alpine:3":     "alpinedigest",
@@ -375,6 +387,7 @@ func TestProbe(t *testing.T) {
 				Tag:    "quay.io/image:latest",
 				Target: "builder",
 				Args:   make(map[string]string),
+				SkipUnusedStages: true,
 			},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
@@ -388,6 +401,59 @@ func TestProbe(t *testing.T) {
 				BaseImages: []Image{
 					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
 				},
+				ExtraImages: []Image{},
+			},
+		},
+		"skip unused stages = false": {
+			containerfile: `FROM quay.io/rhel:9 AS rhelbuilder
+							COPY . .
+							FROM quay.io/fedora:42 AS fedorabuilder
+							COPY . .
+							FROM scratch`,
+			opts: ProbeOpts{
+				Tag:    "quay.io/image:latest",
+				Target: "",
+				Args:   make(map[string]string),
+				SkipUnusedStages: false,
+			},
+			digests: map[string]digest.Digest{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/fedora:42":       "feddigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImages: []Image{
+					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+					{Pullspec: "quay.io/fedora:42", Digest: "feddigest"},
+				},
+				ExtraImages: []Image{},
+			},
+		},
+		"skip unused stages = true": {
+			containerfile: `FROM quay.io/rhel:9 AS rhelbuilder
+							COPY . .
+							FROM quay.io/fedora:42 AS fedorabuilder
+							COPY . .
+							FROM scratch`,
+			opts: ProbeOpts{
+				Tag:    "quay.io/image:latest",
+				Target: "",
+				Args:   make(map[string]string),
+				SkipUnusedStages: true,
+			},
+			digests: map[string]digest.Digest{
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImages: []Image{},
 				ExtraImages: []Image{},
 			},
 		},
