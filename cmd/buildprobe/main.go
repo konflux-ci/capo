@@ -46,6 +46,8 @@ type args struct {
 	target string
 	// Named build contexts passed to the build
 	buildContexts map[string]string
+	// Only report images from stages reachable by the final stage.
+	skipUnusedStages bool
 }
 
 var ErrBuildContext = errors.New("invalid build context syntax, expected name=value")
@@ -125,6 +127,12 @@ func parseArgs() (args, error) {
 		"Build target passed to buildah, if any.",
 	)
 
+	skipUnusedStages := flag.Bool(
+		"skip-unused-stages",
+		true,
+		"Only report images from stages reachable by the final stage. Mirrors buildah build --skip-unused-stages.",
+	)
+
 	flag.Parse()
 
 	if *cfPath == "" {
@@ -145,6 +153,7 @@ func parseArgs() (args, error) {
 		buildArgFiles:     buildArgFiles,
 		envVars:           cliEnv,
 		buildContexts:     buildContexts,
+		skipUnusedStages:  *skipUnusedStages,
 	}, nil
 }
 
@@ -177,12 +186,13 @@ func main() {
 	}
 
 	meta, err := probe.Probe(probe.ProbeOpts{
-		Containerfile: cfReader,
-		Target:        args.target,
-		Tag:           args.tag,
-		Args:          buildArgs,
-		EnvVars:       args.envVars,
-		BuildContexts: args.buildContexts,
+		Containerfile:    cfReader,
+		Target:           args.target,
+		Tag:              args.tag,
+		Args:             buildArgs,
+		EnvVars:          args.envVars,
+		BuildContexts:    args.buildContexts,
+		SkipUnusedStages: args.skipUnusedStages,
 	}, client)
 	if err != nil {
 		log.Fatalf("Failed to probe build metadata %+v", err)
