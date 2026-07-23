@@ -185,15 +185,13 @@ func main() {
 		log.Fatalf("Could not create storage client: %s", err)
 	}
 
-	meta, err := probe.Probe(probe.ProbeOpts{
-		Containerfile:    cfReader,
-		Target:           args.target,
-		Tag:              args.tag,
-		Args:             buildArgs,
-		EnvVars:          args.envVars,
-		BuildContexts:    args.buildContexts,
-		SkipUnusedStages: &args.skipUnusedStages,
-	}, client)
+	meta, err := probe.Probe(args.tag, cfReader, client,
+		probe.WithTarget(args.target),
+		probe.WithArgs(buildArgs),
+		probe.WithEnvVars(args.envVars),
+		probe.WithBuildContexts(args.buildContexts),
+		probe.WithSkipUnusedStages(args.skipUnusedStages),
+	)
 	if err != nil {
 		log.Fatalf("Failed to probe build metadata %+v", err)
 	}
