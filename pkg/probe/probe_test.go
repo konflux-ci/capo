@@ -18,7 +18,8 @@ func TestProbe(t *testing.T) {
 
 	tests := map[string]struct {
 		containerfile string
-		opts          ProbeOpts
+		tag           string
+		options       []ProbeOption
 		digests       map[string]digest.Digest
 		expected      BuildMetadata
 	}{
@@ -28,12 +29,7 @@ func TestProbe(t *testing.T) {
 							COPY . .
 							FROM quay.io/fedora:42
 							COPY --from=builder /app /app`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag: "quay.io/image:latest",
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":    "fedoradigest",
@@ -60,12 +56,7 @@ func TestProbe(t *testing.T) {
 		"extra image from COPY --from": {
 			containerfile: `FROM quay.io/rhel:9
 							COPY --from=quay.io/tools:1 /bin/tool /usr/bin/tool`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag: "quay.io/image:latest",
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/tools:1":      "toolsdigest",
@@ -90,12 +81,7 @@ func TestProbe(t *testing.T) {
 							COPY . .
 							FROM quay.io/fedora:42
 							COPY --from=builder /app /app`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag: "quay.io/image:latest",
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":    "fedoradigest",
@@ -121,12 +107,7 @@ func TestProbe(t *testing.T) {
 							FROM quay.io/rhel:9
 							COPY --from=quay.io/tools:1 /bin/tool /usr/bin/tool
 							COPY --from=quay.io/utils:2 /bin/util /usr/bin/util`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag: "quay.io/image:latest",
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/tools:1":      "toolsdigest",
@@ -151,12 +132,7 @@ func TestProbe(t *testing.T) {
 			containerfile: `FROM quay.io/rhel:9 as builder
 							FROM scratch
 							COPY --from=builder /app /app`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag: "quay.io/image:latest",
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/image:latest": "imagedigest",
@@ -176,12 +152,7 @@ func TestProbe(t *testing.T) {
 			containerfile: `FROM quay.io/rhel:9 as builder
 							FROM oci-archive:/path/to/archive
 							COPY --from=builder /app /app`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag: "quay.io/image:latest",
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/image:latest": "imagedigest",
@@ -200,12 +171,7 @@ func TestProbe(t *testing.T) {
 		"extra image from RUN --mount=from": {
 			containerfile: `FROM quay.io/rhel:9
 							RUN --mount=type=bind,from=quay.io/tools:1,src=/bin/tool,dst=/tmp/tool /tmp/tool --version`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag: "quay.io/image:latest",
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/tools:1":      "toolsdigest",
@@ -228,12 +194,7 @@ func TestProbe(t *testing.T) {
 			containerfile: `FROM quay.io/rhel:9 AS builder
 							FROM quay.io/fedora:42
 							RUN --mount=type=bind,from=builder,src=/app,dst=/app ls /app`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag: "quay.io/image:latest",
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":    "fedoradigest",
@@ -257,12 +218,7 @@ func TestProbe(t *testing.T) {
 							COPY . .
 							FROM quay.io/fedora:42
 							COPY --from=0 /app /app`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag: "quay.io/image:latest",
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":    "fedoradigest",
@@ -290,12 +246,7 @@ func TestProbe(t *testing.T) {
 							COPY . .
 							FROM scratch
 							COPY --from=builder /app /app`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag: "quay.io/image:latest",
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":    "fedoradigest",
@@ -321,12 +272,7 @@ func TestProbe(t *testing.T) {
 							FROM builder AS child
 							FROM scratch
 							COPY --from=child /app /app`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag: "quay.io/image:latest",
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/tools:1":      "toolsdigest",
@@ -352,12 +298,7 @@ func TestProbe(t *testing.T) {
 							COPY . .
 							FROM quay.io/fedora:42
 							COPY --from=builder /app /app`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag: "quay.io/image:latest",
 			digests: map[string]digest.Digest{
 				"quay.io/alpine:3":     "alpinedigest",
 				"quay.io/rhel:9":       "rheldigest",
@@ -383,12 +324,8 @@ func TestProbe(t *testing.T) {
 							COPY . .
 							FROM scratch
 							COPY --from=builder /app /app`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "builder",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag:     "quay.io/image:latest",
+			options: []ProbeOption{WithTarget("builder")},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/image:latest": "imagedigest",
@@ -410,12 +347,8 @@ func TestProbe(t *testing.T) {
 							FROM quay.io/fedora:42 AS fedorabuilder
 							COPY . .
 							FROM scratch`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: false,
-			},
+			tag:     "quay.io/image:latest",
+			options: []ProbeOption{WithSkipUnusedStages(false)},
 			digests: map[string]digest.Digest{
 				"quay.io/rhel:9":       "rheldigest",
 				"quay.io/fedora:42":       "feddigest",
@@ -439,12 +372,8 @@ func TestProbe(t *testing.T) {
 							FROM quay.io/fedora:42 AS fedorabuilder
 							COPY . .
 							FROM scratch`,
-			opts: ProbeOpts{
-				Tag:    "quay.io/image:latest",
-				Target: "",
-				Args:   make(map[string]string),
-				SkipUnusedStages: true,
-			},
+			tag:     "quay.io/image:latest",
+			options: []ProbeOption{WithSkipUnusedStages(true)},
 			digests: map[string]digest.Digest{
 				"quay.io/image:latest": "imagedigest",
 			},
@@ -467,9 +396,7 @@ func TestProbe(t *testing.T) {
 				test.digests, make(map[string]storageclient.OCIImageConfig),
 			)
 
-			test.opts.Containerfile = strings.NewReader(test.containerfile)
-
-			actual, err := Probe(test.opts, client)
+			actual, err := Probe(test.tag, strings.NewReader(test.containerfile), client, test.options...)
 			if err != nil {
 				t.Fatalf("Probe returned unexpected error: %v", err)
 			}

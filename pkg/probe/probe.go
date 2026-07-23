@@ -35,20 +35,20 @@ type BuildMetadata struct {
 // ProbeOpts configures a Probe invocation.
 type ProbeOpts struct {
 	// Tag of the built image
-	Tag string
+	tag string
 	// Reader of the containerfile
-	Containerfile io.Reader
+	containerfile io.Reader
 	// Target stage of the build
-	Target string
+	target string
 	// Build args
-	Args map[string]string
+	args map[string]string
 	// Environment variables passed to the build
-	EnvVars map[string]string
+	envVars map[string]string
 	// Named build contexts passed to the build
-	BuildContexts map[string]string
+	buildContexts map[string]string
 	// In multi-stage builds, skip stages that don't contribute to the final
-	// stage. If is equal to nil, defaults to true.
-	SkipUnusedStages *bool
+	// stage.
+	skipUnusedStages bool
 }
 
 // ErrParseContainerfile is returned when the Containerfile cannot be parsed.
@@ -57,29 +57,81 @@ var ErrParseContainerfile = errors.New("could not parse containerfile")
 // ErrDigestResolve is returned when an image digest cannot be resolved.
 var ErrDigestResolve = errors.New("failed to resolve digest of image")
 
-// Probe parses the Containerfile described in opts and collects build metadata.
-// When client is non-nil, image digests are resolved through the storage client.
-func Probe(opts ProbeOpts, client storageclient.Client) (BuildMetadata, error) {
-	meta := BuildMetadata{}
+type ProbeOption func (*ProbeOpts)
 
-	meta.Image.Pullspec = opts.Tag
+// Set the target used for the build. If unset, defaults to last stage.
+func WithTarget(target string) ProbeOption {
+	return func (opts *ProbeOpts) {
+		opts.target = target
+	}
+}
+
+// Set the build args used for the build.
+func WithArgs(args map[string]string) ProbeOption {
+	return func (opts *ProbeOpts) {
+		opts.args = args
+	}
+}
+
+// Set the envs used for the build.
+func WithEnvVars(envVars map[string]string) ProbeOption {
+	return func (opts *ProbeOpts) {
+		opts.envVars = envVars
+	}
+}
+
+// Set the BuildContexts used for the build.
+func WithBuildContexts(buildContexts map[string]string) ProbeOption {
+	return func (opts *ProbeOpts) {
+		opts.buildContexts = buildContexts
+	}
+}
+
+// Set the SkipUnusedStages option. If unset, defaults to true.
+func WithSkipUnusedStages(skipUnusedStages bool) ProbeOption {
+	return func (opts *ProbeOpts) {
+		opts.skipUnusedStages = skipUnusedStages
+	}
+}
+
+// Probe parses the passed containerfile and collects build metadata. When
+// client is non-nil, image digests are resolved through the storage client.
+func Probe(
+	tag string, cfile io.Reader, client storageclient.Client, options ...ProbeOption,
+) (BuildMetadata, error) {
+	opts := ProbeOpts {
+		tag: tag,
+		containerfile: cfile,
+		target: "",
+		skipUnusedStages: true,
+		args: make(map[string]string),
+		buildContexts: make(map[string]string),
+		envVars: make(map[string]string),
+	}
+
+	for _, o := range options {
+		o(&opts)
+	}
+
+	meta := BuildMetadata{}
+	meta.Image.Pullspec = opts.tag
 
 	if client != nil {
-		digest, err := client.ResolveDigest(opts.Tag)
+		digest, err := client.ResolveDigest(opts.tag)
 		if err != nil {
-			return meta, fmt.Errorf("%w %q: %w", ErrDigestResolve, opts.Tag, err)
+			return meta, fmt.Errorf("%w %q: %w", ErrDigestResolve, opts.tag, err)
 		}
 
 		meta.Image.Digest = digest.String()
 	}
 
 	cf, err := containerfile.Parse(
-		opts.Containerfile,
+		opts.containerfile,
 		containerfile.BuildOptions{
-			Args:          opts.Args,
-			EnvVars:       opts.EnvVars,
-			Target:        opts.Target,
-			BuildContexts: opts.BuildContexts,
+			Args:          opts.args,
+			EnvVars:       opts.envVars,
+			Target:        opts.target,
+			BuildContexts: opts.buildContexts,
 		},
 	)
 	if err != nil {
@@ -89,7 +141,7 @@ func Probe(opts ProbeOpts, client storageclient.Client) (BuildMetadata, error) {
 	// If SkipUnusedStages == false, all stages up to and including the target
 	// will be built by buildah.
 	reachable := cf.Stages
-	if opts.SkipUnusedStages == nil || *opts.SkipUnusedStages {
+	if opts.skipUnusedStages {
 		reachable = reachableStages(cf.Stages)
 	}
 
