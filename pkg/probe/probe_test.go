@@ -462,6 +462,90 @@ func TestProbe(t *testing.T) {
 				ExtraImages: []Image{},
 			},
 		},
+		"build args resolve FROM and COPY --from images": {
+			containerfile: `ARG BASE_IMAGE=default:tag
+							ARG TOOL_IMAGE=default:tool
+							FROM ${BASE_IMAGE}
+							COPY --from=${TOOL_IMAGE} /bin/tool /usr/bin/tool`,
+			tag:     "quay.io/image:latest",
+			options: []ProbeOption{WithArgs(map[string]string{"BASE_IMAGE": "quay.io/rhel:9", "TOOL_IMAGE": "quay.io/tools:1"})},
+			digests: map[string]digest.Digest{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/tools:1":      "toolsdigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImage:         Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{},
+				ExtraImages: []Image{
+					{Pullspec: "quay.io/tools:1", Digest: "toolsdigest"},
+				},
+			},
+		},
+		"env vars resolve COPY --from image": {
+			containerfile: `FROM quay.io/rhel:9
+							COPY --from=${TOOL_IMAGE} /bin/tool /usr/bin/tool`,
+			tag:     "quay.io/image:latest",
+			options: []ProbeOption{WithEnvVars(map[string]string{"TOOL_IMAGE": "quay.io/tools:1"})},
+			digests: map[string]digest.Digest{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/tools:1":      "toolsdigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImage:         Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{},
+				ExtraImages: []Image{
+					{Pullspec: "quay.io/tools:1", Digest: "toolsdigest"},
+				},
+			},
+		},
+		"build context prevents COPY --from appearing as extra image": {
+			containerfile: `FROM quay.io/rhel:9
+							COPY --from=mycontext /src /dst`,
+			tag:     "quay.io/image:latest",
+			options: []ProbeOption{WithBuildContexts(map[string]string{"mycontext": "/local/path"})},
+			digests: map[string]digest.Digest{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImage:         Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{},
+				ExtraImages:       []Image{},
+			},
+		},
+		"build context takes precedence over external image": {
+			containerfile: `FROM quay.io/rhel:9
+							COPY --from=quay.io/tools:1 /bin/tool /usr/bin/tool`,
+			tag:     "quay.io/image:latest",
+			options: []ProbeOption{WithBuildContexts(map[string]string{"quay.io/tools:1": "/local/path"})},
+			digests: map[string]digest.Digest{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImage:         Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{},
+				ExtraImages:       []Image{},
+			},
+		},
 	}
 
 	for name, test := range tests {
