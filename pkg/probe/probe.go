@@ -27,9 +27,32 @@ type Image struct {
 // image itself, its base images (FROM lines), and any extra images referenced
 // via COPY --from or RUN --mount.
 type BuildMetadata struct {
-	Image       Image   `yaml:"image"`
-	BaseImages  []Image `yaml:"base_images"`
-	ExtraImages []Image `yaml:"extra_images"`
+	Image              Image   `yaml:"image"`
+	BaseImage          Image   `yaml:"base_image"`
+	BuilderBaseImages  []Image `yaml:"builder_base_images"`
+	ExtraImages        []Image `yaml:"extra_images"`
+}
+
+// GatherImages extracts and deduplicates pullspecs in BuildMetadata into a single slice
+func (m BuildMetadata) GatherPullspecs() []string {
+	res := make([]string, 0)
+	seen := make(map[string]bool)
+	add := func(img Image) {
+		if img.Pullspec == "" || seen[img.Pullspec] {
+			return
+		}
+		seen[img.Pullspec] = true
+		res = append(res, img.Pullspec)
+	}
+	add(m.Image)
+	add(m.BaseImage)
+	for _, img := range m.BuilderBaseImages {
+		add(img)
+	}
+	for _, img := range m.ExtraImages {
+		add(img)
+	}
+	return res
 }
 
 // ProbeOpts configures a Probe invocation.
@@ -145,12 +168,18 @@ func Probe(
 		reachable = reachableStages(cf.Stages)
 	}
 
-	baseImages, err := resolveBaseImages(client, reachable)
+	baseImage, err := resolveBaseImage(client, reachable)
+	if err != nil {
+		return meta, err
+	}
+	meta.BaseImage = baseImage
+
+	builderBaseImages, err := resolveBuilderBaseImages(client, reachable)
 	if err != nil {
 		return meta, err
 	}
 
-	meta.BaseImages = baseImages
+	meta.BuilderBaseImages = builderBaseImages
 
 	extraImages, err := resolveExtraImages(client, reachable)
 	if err != nil {
@@ -240,11 +269,33 @@ func stageRefs(stage containerfile.Stage) []string {
 	return refs
 }
 
-func resolveBaseImages(client storageclient.Client, stages []containerfile.Stage) ([]Image, error) {
+func resolveBaseImage(client storageclient.Client, stages []containerfile.Stage) (Image, error) {
+	stage := stages[len(stages)-1]
+
+	if storageclient.IsSpecialBase(stage.Base) {
+		return Image{}, nil
+	}
+
+	var d digest.Digest
+	if client != nil {
+		var err error
+		d, err = client.ResolveDigest(stage.Base)
+		if err != nil {
+			return Image{}, fmt.Errorf("%w %q: %w", ErrDigestResolve, stage.Base, err)
+		}
+	}
+
+	return Image{
+		Pullspec: stage.Base,
+		Digest:   d.String(),
+	}, nil
+}
+
+func resolveBuilderBaseImages(client storageclient.Client, stages []containerfile.Stage) ([]Image, error) {
 	res := make([]Image, 0)
 	seen := make(map[string]bool)
 
-	for _, stage := range stages {
+	for _, stage := range stages[:len(stages)-1] {
 		if storageclient.IsSpecialBase(stage.Base) {
 			continue
 		}
@@ -277,7 +328,7 @@ func resolveExtraImages(client storageclient.Client, stages []containerfile.Stag
 	seen := make(map[string]bool)
 
 	addImage := func(pullspec string) error {
-		if seen[pullspec] {
+		if storageclient.IsSpecialBase(pullspec) || seen[pullspec] {
 			return nil
 		}
 		seen[pullspec] = true

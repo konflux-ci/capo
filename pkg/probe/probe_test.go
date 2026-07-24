@@ -40,15 +40,12 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
-					{
-						Pullspec: "quay.io/rhel:9",
-						Digest:   "rheldigest",
-					},
-					{
-						Pullspec: "quay.io/fedora:42",
-						Digest:   "fedoradigest",
-					},
+				BaseImage: Image{
+					Pullspec: "quay.io/fedora:42",
+					Digest:   "fedoradigest",
+				},
+				BuilderBaseImages: []Image{
+					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
 				},
 				ExtraImages: []Image{},
 			},
@@ -67,9 +64,8 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
-					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
-				},
+				BaseImage: Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{},
 				ExtraImages: []Image{
 					{Pullspec: "quay.io/tools:1", Digest: "toolsdigest"},
 				},
@@ -92,9 +88,9 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
+				BaseImage: Image{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
+				BuilderBaseImages: []Image{
 					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
-					{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
 				},
 				ExtraImages: []Image{},
 			},
@@ -119,16 +115,15 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
-					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
-				},
+				BaseImage:         Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{},
 				ExtraImages: []Image{
 					{Pullspec: "quay.io/tools:1", Digest: "toolsdigest"},
 					{Pullspec: "quay.io/utils:2", Digest: "utilsdigest"},
 				},
 			},
 		},
-		"scratch base is excluded from base images": {
+		"scratch base is included as base image": {
 			containerfile: `FROM quay.io/rhel:9 as builder
 							FROM scratch
 							COPY --from=builder /app /app`,
@@ -142,27 +137,8 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
-					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
-				},
-				ExtraImages: []Image{},
-			},
-		},
-		"oci-archive base is excluded from base images": {
-			containerfile: `FROM quay.io/rhel:9 as builder
-							FROM oci-archive:/path/to/archive
-							COPY --from=builder /app /app`,
-			tag: "quay.io/image:latest",
-			digests: map[string]digest.Digest{
-				"quay.io/rhel:9":       "rheldigest",
-				"quay.io/image:latest": "imagedigest",
-			},
-			expected: BuildMetadata{
-				Image: Image{
-					Pullspec: "quay.io/image:latest",
-					Digest:   "imagedigest",
-				},
-				BaseImages: []Image{
+				BaseImage:         Image{},
+				BuilderBaseImages: []Image{
 					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
 				},
 				ExtraImages: []Image{},
@@ -182,9 +158,8 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
-					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
-				},
+				BaseImage:         Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{},
 				ExtraImages: []Image{
 					{Pullspec: "quay.io/tools:1", Digest: "toolsdigest"},
 				},
@@ -205,9 +180,9 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
+				BaseImage: Image{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
+				BuilderBaseImages: []Image{
 					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
-					{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
 				},
 				ExtraImages: []Image{},
 			},
@@ -229,9 +204,9 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
+				BaseImage: Image{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
+				BuilderBaseImages: []Image{
 					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
-					{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
 				},
 				ExtraImages: []Image{},
 			},
@@ -257,7 +232,8 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
+				BaseImage: Image{},
+				BuilderBaseImages: []Image{
 					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
 					{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
 				},
@@ -283,7 +259,8 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
+				BaseImage: Image{},
+				BuilderBaseImages: []Image{
 					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
 				},
 				ExtraImages: []Image{
@@ -291,7 +268,7 @@ func TestProbe(t *testing.T) {
 				},
 			},
 		},
-		"unreachable stage is excluded when target is set": {
+		"unreachable stage is excluded": {
 			containerfile: `FROM quay.io/alpine:3 AS unreachable
 							RUN echo hello
 							FROM quay.io/rhel:9 AS builder
@@ -310,9 +287,9 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
+				BaseImage: Image{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
+				BuilderBaseImages: []Image{
 					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
-					{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
 				},
 				ExtraImages: []Image{},
 			},
@@ -335,10 +312,9 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
-					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
-				},
-				ExtraImages: []Image{},
+				BaseImage:         Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{},
+				ExtraImages:       []Image{},
 			},
 		},
 		"skip unused stages = false": {
@@ -359,7 +335,8 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{
+				BaseImage: Image{},
+				BuilderBaseImages: []Image{
 					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
 					{Pullspec: "quay.io/fedora:42", Digest: "feddigest"},
 				},
@@ -382,8 +359,191 @@ func TestProbe(t *testing.T) {
 					Pullspec: "quay.io/image:latest",
 					Digest:   "imagedigest",
 				},
-				BaseImages: []Image{},
+				BaseImage:         Image{},
+				BuilderBaseImages: []Image{},
+				ExtraImages:       []Image{},
+			},
+		},
+		"target changes which image is base image": {
+			containerfile: `FROM quay.io/alpine:3 AS first
+							COPY . .
+							FROM quay.io/rhel:9 AS second
+							COPY --from=first /app /app
+							FROM quay.io/fedora:42
+							COPY --from=second /build /build`,
+			tag:     "quay.io/image:latest",
+			options: []ProbeOption{WithTarget("second")},
+			digests: map[string]digest.Digest{
+				"quay.io/alpine:3":     "alpinedigest",
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImage: Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{
+					{Pullspec: "quay.io/alpine:3", Digest: "alpinedigest"},
+				},
 				ExtraImages: []Image{},
+			},
+		},
+		"builder and final share same base image": {
+			containerfile: `FROM quay.io/rhel:9 AS builder
+							COPY . .
+							FROM quay.io/rhel:9
+							COPY --from=builder /app /app`,
+			tag: "quay.io/image:latest",
+			digests: map[string]digest.Digest{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImage: Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{
+					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				},
+				ExtraImages: []Image{},
+			},
+		},
+		"special bases are excluded from all image fields": {
+			containerfile: `FROM scratch AS builder1
+							COPY --from=quay.io/tools:1 /bin/tool /tool
+							FROM oci-archive:/path/to/archive AS builder2
+							COPY --from=builder1 /tool /tool2
+							FROM scratch
+							COPY --from=builder2 /tool2 /usr/bin/tool
+							COPY --from=oci-archive:/extra /bin/extra /usr/bin/extra`,
+			tag: "quay.io/image:latest",
+			digests: map[string]digest.Digest{
+				"quay.io/tools:1":      "toolsdigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImage:         Image{},
+				BuilderBaseImages: []Image{},
+				ExtraImages: []Image{
+					{Pullspec: "quay.io/tools:1", Digest: "toolsdigest"},
+				},
+			},
+		},
+		"multiple builder stages with same base are deduplicated": {
+			containerfile: `FROM quay.io/rhel:9 AS builder1
+							COPY . .
+							FROM quay.io/rhel:9 AS builder2
+							COPY --from=builder1 /app /app2
+							FROM quay.io/fedora:42
+							COPY --from=builder2 /app /app`,
+			tag: "quay.io/image:latest",
+			digests: map[string]digest.Digest{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/fedora:42":    "fedoradigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImage: Image{Pullspec: "quay.io/fedora:42", Digest: "fedoradigest"},
+				BuilderBaseImages: []Image{
+					{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				},
+				ExtraImages: []Image{},
+			},
+		},
+		"build args resolve FROM and COPY --from images": {
+			containerfile: `ARG BASE_IMAGE=default:tag
+							ARG TOOL_IMAGE=default:tool
+							FROM ${BASE_IMAGE}
+							COPY --from=${TOOL_IMAGE} /bin/tool /usr/bin/tool`,
+			tag:     "quay.io/image:latest",
+			options: []ProbeOption{WithArgs(map[string]string{"BASE_IMAGE": "quay.io/rhel:9", "TOOL_IMAGE": "quay.io/tools:1"})},
+			digests: map[string]digest.Digest{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/tools:1":      "toolsdigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImage:         Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{},
+				ExtraImages: []Image{
+					{Pullspec: "quay.io/tools:1", Digest: "toolsdigest"},
+				},
+			},
+		},
+		"env vars resolve COPY --from image": {
+			containerfile: `FROM quay.io/rhel:9
+							COPY --from=${TOOL_IMAGE} /bin/tool /usr/bin/tool`,
+			tag:     "quay.io/image:latest",
+			options: []ProbeOption{WithEnvVars(map[string]string{"TOOL_IMAGE": "quay.io/tools:1"})},
+			digests: map[string]digest.Digest{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/tools:1":      "toolsdigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImage:         Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{},
+				ExtraImages: []Image{
+					{Pullspec: "quay.io/tools:1", Digest: "toolsdigest"},
+				},
+			},
+		},
+		"build context prevents COPY --from appearing as extra image": {
+			containerfile: `FROM quay.io/rhel:9
+							COPY --from=mycontext /src /dst`,
+			tag:     "quay.io/image:latest",
+			options: []ProbeOption{WithBuildContexts(map[string]string{"mycontext": "/local/path"})},
+			digests: map[string]digest.Digest{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImage:         Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{},
+				ExtraImages:       []Image{},
+			},
+		},
+		"build context takes precedence over external image": {
+			containerfile: `FROM quay.io/rhel:9
+							COPY --from=quay.io/tools:1 /bin/tool /usr/bin/tool`,
+			tag:     "quay.io/image:latest",
+			options: []ProbeOption{WithBuildContexts(map[string]string{"quay.io/tools:1": "/local/path"})},
+			digests: map[string]digest.Digest{
+				"quay.io/rhel:9":       "rheldigest",
+				"quay.io/image:latest": "imagedigest",
+			},
+			expected: BuildMetadata{
+				Image: Image{
+					Pullspec: "quay.io/image:latest",
+					Digest:   "imagedigest",
+				},
+				BaseImage:         Image{Pullspec: "quay.io/rhel:9", Digest: "rheldigest"},
+				BuilderBaseImages: []Image{},
+				ExtraImages:       []Image{},
 			},
 		},
 	}
@@ -403,6 +563,66 @@ func TestProbe(t *testing.T) {
 
 			if diff := cmp.Diff(test.expected, actual); diff != "" {
 				t.Errorf("Probe() result mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestGatherPullspecs(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		meta     BuildMetadata
+		expected []string
+	}{
+		"all fields populated": {
+			meta: BuildMetadata{
+				Image:             Image{Pullspec: "quay.io/image:latest"},
+				BaseImage:         Image{Pullspec: "quay.io/fedora:42"},
+				BuilderBaseImages: []Image{{Pullspec: "quay.io/rhel:9"}},
+				ExtraImages:       []Image{{Pullspec: "quay.io/tools:1"}},
+			},
+			expected: []string{
+				"quay.io/image:latest",
+				"quay.io/fedora:42",
+				"quay.io/rhel:9",
+				"quay.io/tools:1",
+			},
+		},
+		"duplicates are removed": {
+			meta: BuildMetadata{
+				Image:             Image{Pullspec: "quay.io/rhel:9"},
+				BaseImage:         Image{Pullspec: "quay.io/rhel:9"},
+				BuilderBaseImages: []Image{{Pullspec: "quay.io/rhel:9"}},
+				ExtraImages:       []Image{{Pullspec: "quay.io/rhel:9"}},
+			},
+			expected: []string{"quay.io/rhel:9"},
+		},
+		"empty pullspecs are skipped": {
+			meta: BuildMetadata{
+				Image:             Image{Pullspec: "quay.io/image:latest"},
+				BaseImage:         Image{},
+				BuilderBaseImages: []Image{{Pullspec: "quay.io/rhel:9"}},
+				ExtraImages:       []Image{},
+			},
+			expected: []string{
+				"quay.io/image:latest",
+				"quay.io/rhel:9",
+			},
+		},
+		"empty metadata": {
+			meta:     BuildMetadata{},
+			expected: []string{},
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			actual := test.meta.GatherPullspecs()
+			if diff := cmp.Diff(test.expected, actual); diff != "" {
+				t.Errorf("GatherPullspecs() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
