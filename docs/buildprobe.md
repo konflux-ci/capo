@@ -32,7 +32,10 @@ buildprobe writes YAML to stdout with the following structure:
 image:
     pullspec: <tag>
     digest: <resolved_digest>
-base_images:
+base_image:
+    pullspec: <tag>
+    digest: <resolved_digest>
+builder_base_images:
     - pullspec: <image_reference>
       digest: <resolved_digest>
 extra_images:
@@ -41,7 +44,8 @@ extra_images:
 ```
 
 - **image** — The built image identified by `-tag`, with its resolved digest.
-- **base_images** — Images from `FROM` instructions that are reachable from the
+- **base_image** — The base image of the last stage.
+- **builder_base_images — Images from `FROM` instructions that are reachable from the
   final (or target) stage. Images named `scratch` and `oci-archive:` references
   are excluded.
 - **extra_images** — Images referenced via `COPY --from=<image>` or
