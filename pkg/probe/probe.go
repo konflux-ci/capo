@@ -160,6 +160,9 @@ func Probe(
 	if err != nil {
 		return meta, fmt.Errorf("%w: %w", ErrParseContainerfile, err)
 	}
+	if len(cf.Stages) == 0 {
+		return meta, nil
+	}
 
 	// If SkipUnusedStages == false, all stages up to and including the target
 	// will be built by buildah.
