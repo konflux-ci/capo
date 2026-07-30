@@ -33,7 +33,7 @@ type BuildMetadata struct {
 	ExtraImages        []Image `yaml:"extra_images,omitempty"`
 }
 
-// GatherImages extracts and deduplicates pullspecs in BuildMetadata into a single slice
+// GatherPullspecs extracts and deduplicates pullspecs in BuildMetadata into a single slice
 func (m BuildMetadata) GatherPullspecs() []string {
 	res := make([]string, 0)
 	seen := make(map[string]bool)

@@ -123,7 +123,7 @@ func TestProbe(t *testing.T) {
 				},
 			},
 		},
-		"scratch base is included as base image": {
+		"scratch base is excluded a as base image": {
 			containerfile: `FROM quay.io/rhel:9 as builder
 							FROM scratch
 							COPY --from=builder /app /app`,
