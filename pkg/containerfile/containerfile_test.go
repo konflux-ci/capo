@@ -3,6 +3,7 @@
 package containerfile
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -1070,6 +1071,37 @@ label test"`,
 
 			if diff := cmp.Diff(test.expected, actual, cmpopts.EquateEmpty()); diff != "" {
 				t.Errorf("Parse() result mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseErrors(t *testing.T) {
+	t.Parallel()
+	tests := map[string]struct {
+		containerfile string
+		wantErr       error
+	}{
+		"no stages - only ARG": {
+			containerfile: `ARG BASE=fedora`,
+			wantErr:       ErrNoStages,
+		},
+		"no stages - empty": {
+			containerfile: ``,
+			wantErr:       ErrNoStages,
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			reader := strings.NewReader(test.containerfile)
+			_, err := Parse(reader, BuildOptions{})
+			if err == nil {
+				t.Fatalf("expected error wrapping %v, got nil", test.wantErr)
+			}
+			if !errors.Is(err, test.wantErr) {
+				t.Errorf("expected error wrapping %v, got: %v", test.wantErr, err)
 			}
 		})
 	}

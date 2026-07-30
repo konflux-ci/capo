@@ -165,6 +165,9 @@ var ErrTargetNotFound = errors.New("specified target stage was not found in the 
 // ErrParse is returned when the Containerfile cannot be parsed.
 var ErrParse = errors.New("error while parsing containerfile")
 
+// ErrNoStages is returned when the containerfile contains no FROM instruction
+var ErrNoStages = errors.New("containerfile contains no stages")
+
 // Parse reads a Containerfile from the passed reader and uses the passed
 // BuildOptions to parse the Containerfile into stages.
 func Parse(reader io.Reader, opts BuildOptions) (Containerfile, error) {
@@ -186,6 +189,9 @@ func Parse(reader io.Reader, opts BuildOptions) (Containerfile, error) {
 	rawStages, err := imagebuilder.NewStages(node, builder)
 	if err != nil {
 		return Containerfile{}, fmt.Errorf("%w: %w", ErrParse, err)
+	}
+	if len(rawStages) == 0 {
+		return Containerfile{}, ErrNoStages
 	}
 
 	if opts.Target != "" {
