@@ -45,7 +45,7 @@ extra_images:
 
 - **image** — The built image identified by `-tag`, with its resolved digest.
 - **base_image** — The base image of the last stage.
-- **builder_base_images — Images from `FROM` instructions that are reachable from the
+- **builder_base_images** — Images from `FROM` instructions that are reachable from the
   final (or target) stage. Images named `scratch` and `oci-archive:` references
   are excluded.
 - **extra_images** — Images referenced via `COPY --from=<image>` or
