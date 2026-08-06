@@ -176,6 +176,7 @@ func setupStore() (storage.Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create default storage options: %w: %w", err, ErrStorageSetup)
 	}
+	opts.GraphDriverName = "overlay"
 
 	store, err := storage.GetStore(opts)
 	if err != nil {
