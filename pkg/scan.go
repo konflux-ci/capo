@@ -200,7 +200,7 @@ func (s *Scanner) Scan(
 	res := PackageMetadata{
 		Packages: make([]PackageMetadataItem, 0),
 	}
-	s.logger.Debug("parsed containerfile stages", "stages", cf.Stages)
+	s.logger.Info("parsed containerfile stages", "stages", cf.Stages)
 
 	digests, err := getImageDigests(s.sclient, cf)
 	if err != nil {
@@ -212,7 +212,7 @@ func (s *Scanner) Scan(
 		return PackageMetadata{}, err
 	}
 	s.logPackageSources(packageSources)
-	s.logger.Debug("syft config", "defaultTag", s.defaultCatalogersTag, "selection", s.selectCatalogers)
+	s.logger.Info("syft config", "defaultTag", s.defaultCatalogersTag, "selection", s.selectCatalogers)
 
 	for _, source := range packageSources {
 		items, err := s.scanBuilderStageTree(source)
@@ -526,13 +526,13 @@ func resolveRelativeDestination(cp containerfile.Copy, baseWorkdir string) strin
 func (s *Scanner) logPackageSources(roots []packageSource) {
 	for _, root := range roots {
 		if root.external {
-			s.logger.Debug("package source: external image",
+			s.logger.Info("package source: external image",
 				"pullspec", root.pullspec,
 				"digestBase", root.digestBase,
 				"sources", root.sources,
 			)
 		} else {
-			s.logger.Debug("package source: builder stage",
+			s.logger.Info("package source: builder stage",
 				"index", root.index,
 				"alias", root.alias,
 				"pullspec", root.pullspec,
@@ -548,7 +548,7 @@ func (s *Scanner) logPackageSources(roots []packageSource) {
 }
 
 func (s *Scanner) logPackageSourceDescendant(node *packageSourceDescendant, parentAlias string, depth int) {
-	s.logger.Debug("package source: descendant stage",
+	s.logger.Info("package source: descendant stage",
 		"depth", depth,
 		"index", node.index,
 		"alias", node.alias,
@@ -568,8 +568,8 @@ func (s *Scanner) logPackageSourceDescendant(node *packageSourceDescendant, pare
 func (s *Scanner) scanBuilderStageTree(
 	root packageSource,
 ) ([]PackageMetadataItem, error) {
-	s.logger.Debug("starting root scan", "base", root.digestBase, "pullspec", root.pullspec)
-	defer s.logger.Debug("ending root scan", "base", root.digestBase, "pullspec", root.pullspec)
+	s.logger.Info("starting root scan", "base", root.digestBase, "pullspec", root.pullspec)
+	defer s.logger.Info("ending root scan", "base", root.digestBase, "pullspec", root.pullspec)
 	res := make([]PackageMetadataItem, 0)
 
 	// root scan
@@ -629,8 +629,8 @@ func (s *Scanner) scanDescendants(
 	diffBase *storage.Image,
 	rootDigestBase string,
 ) ([]PackageMetadataItem, error) {
-	s.logger.Debug("starting descendant scan", "alias", node.alias)
-	defer s.logger.Debug("ending descendant scan", "alias", node.alias)
+	s.logger.Info("starting descendant scan", "alias", node.alias)
+	defer s.logger.Info("ending descendant scan", "alias", node.alias)
 	res := make([]PackageMetadataItem, 0)
 
 	intermediateContentPath, err := os.MkdirTemp("", "")
@@ -648,12 +648,12 @@ func (s *Scanner) scanDescendants(
 		return nil, err
 	}
 
-	if s.logger.Enabled(context.Background(), slog.LevelDebug) {
+	if s.logger.Enabled(context.Background(), slog.LevelInfo) {
 		if n, sizeErr := dirSize(intermediateContentPath); sizeErr != nil {
 			s.logger.Warn("failed to calculate content disk usage",
 				"kind", "intermediate (chained)", "alias", node.alias, "error", sizeErr)
 		} else {
-			s.logger.Debug("content disk usage", "kind", "intermediate (chained)", "alias", node.alias, "size", formatSize(n))
+			s.logger.Info("content disk usage", "kind", "intermediate (chained)", "alias", node.alias, "sizeKB", n/1024)
 		}
 	}
 
@@ -736,19 +736,19 @@ func (s *Scanner) scanSource(
 		return nil, err
 	}
 
-	if s.logger.Enabled(context.Background(), slog.LevelDebug) {
+	if s.logger.Enabled(context.Background(), slog.LevelInfo) {
 		if n, sizeErr := dirSize(builderContentPath); sizeErr != nil {
 			s.logger.Warn("failed to calculate content disk usage",
 				"kind", originType, "pullspec", root.pullspec, "error", sizeErr)
 		} else {
-			s.logger.Debug("content disk usage", "kind", originType, "pullspec", root.pullspec, "size", formatSize(n))
+			s.logger.Info("content disk usage", "kind", originType, "pullspec", root.pullspec, "sizeKB", n/1024)
 		}
 		if intermediateContentPath != "" {
 			if n, sizeErr := dirSize(intermediateContentPath); sizeErr != nil {
 				s.logger.Warn("failed to calculate content disk usage",
 					"kind", "intermediate", "pullspec", root.pullspec, "error", sizeErr)
 			} else {
-				s.logger.Debug("content disk usage", "kind", "intermediate", "pullspec", root.pullspec, "size", formatSize(n))
+				s.logger.Info("content disk usage", "kind", "intermediate", "pullspec", root.pullspec, "sizeKB", n/1024)
 			}
 		}
 	}
