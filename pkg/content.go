@@ -90,9 +90,9 @@ func (s *Scanner) getContent(
 
 func (s *Scanner) logContent(kind string, content []string, pullspec string) {
 	if len(content) == 0 {
-		s.logger.Debug("found no content", "kind", kind, "pullspec", pullspec)
+		s.logger.Info("found no content", "kind", kind, "pullspec", pullspec)
 	} else {
-		s.logger.Debug("included content", "kind", kind, "content", content, "pullspec", pullspec)
+		s.logger.Info("included content", "kind", kind, "content", content, "pullspec", pullspec)
 	}
 }
 
@@ -114,7 +114,7 @@ func (s *Scanner) getDescendantContent(
 	}
 	if intermediateImage == nil {
 		// no intermediate image found for node - pass diffBase through unchanged
-		s.logger.Debug("no intermediate image found for chained stage, skipping", "stage", stageAlias)
+		s.logger.Info("no intermediate image found for chained stage, skipping", "stage", stageAlias)
 		return diffBase, nil, nil
 	}
 
@@ -414,7 +414,7 @@ func (s *Scanner) findIntermediateImage(
 		stageName := cfg.Config.Labels["io.buildah.stage.name"]
 		switch stageName {
 		case stageAlias: {
-			s.logger.Debug("found intermediate image", "imageID", images[i].ID, "stage", stageAlias)
+			s.logger.Info("found intermediate image", "imageID", images[i].ID, "stage", stageAlias)
 			return &images[i], nil
 		}
 		case "": {
@@ -482,20 +482,4 @@ func dirSize(path string) (int64, error) {
 	return size, nil
 }
 
-func formatSize(bytes int64) string {
-	const (
-		kb = 1024
-		mb = 1024 * kb
-		gb = 1024 * mb
-	)
-	switch {
-	case bytes >= gb:
-		return fmt.Sprintf("%.1fGB", float64(bytes)/float64(gb))
-	case bytes >= mb:
-		return fmt.Sprintf("%.1fMB", float64(bytes)/float64(mb))
-	case bytes >= kb:
-		return fmt.Sprintf("%.1fKB", float64(bytes)/float64(kb))
-	default:
-		return fmt.Sprintf("%dB", bytes)
-	}
-}
+

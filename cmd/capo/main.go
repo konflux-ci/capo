@@ -190,8 +190,12 @@ func main() {
 	}
 	log.Printf("Parsed stages: %+v", cf.Stages)
 
+	logLevel := slog.LevelInfo
+	if os.Getenv("CAPO_DEBUG") != "" {
+		logLevel = slog.LevelDebug
+	}
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: logLevel,
 	}))
 
 	scanner, err := capo.NewScanner(
