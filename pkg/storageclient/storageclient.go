@@ -112,6 +112,7 @@ func DefaultBuildahClient() (Client, error) {
 		return nil,
 			fmt.Errorf("%w: failed to create default storage options: %w", ErrBuildahStorageSetup, err)
 	}
+	opts.GraphDriverName = "overlay"
 
 	store, err := storage.GetStore(opts)
 	if err != nil {
