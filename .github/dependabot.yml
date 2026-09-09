@@ -7,6 +7,9 @@ updates:
       day: "monday"
     commit-message:
       prefix: "chore(actions): "
+    groups:
+      github-actions:
+        patterns: ["*"]
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
@@ -14,3 +17,6 @@ updates:
       day: "monday"
     commit-message:
       prefix: "chore(go): "
+    groups:
+      gomod:
+        patterns: [ "*" ]
