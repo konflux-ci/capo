@@ -20,11 +20,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/konflux-ci/capo/pkg/containerfile"
 	"github.com/konflux-ci/capo/pkg/storageclient"
-	"github.com/magefile/mage/sh"
 	"go.podman.io/storage"
+	"go.podman.io/storage/pkg/reexec"
 )
 
 func TestMain(m *testing.M) {
+	if reexec.Init() {
+		os.Exit(0)
+	}
+
 	err := prepareBinaries()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to prepare binaries: %v\n", err)
@@ -62,8 +66,8 @@ func prepareBinaries() error {
 
 		srcDir := filepath.Join(binariesDir, entry.Name())
 
-  		// -X main.Version=1.0.0 — sets a clean version string so we have clean PURLs for our binaries
-  		// -buildid= — strips the build ID, to remove the timestamp embedded in the binary metadata
+		// -X main.Version=1.0.0 — sets a clean version string so we have clean PURLs for our binaries
+		// -buildid= — strips the build ID, to remove the timestamp embedded in the binary metadata
 		cmd := exec.Command("go", "build", "-ldflags", "-buildid= -X main.Version=1.0.0", "-o", outputDir, ".")
 		cmd.Dir = srcDir
 		if output, err := cmd.CombinedOutput(); err != nil {
@@ -74,15 +78,108 @@ func prepareBinaries() error {
 	return nil
 }
 
-func createTestScanner(selectionRequest []string) (*Scanner, error) {
-	return NewScanner(
+// withStore is a test-only option for using the same store as buildah.
+func withStore(store storage.Store) Option {
+	return func(s *Scanner) {
+		s.store = store
+	}
+}
+
+// buildahConfig contains values used for calling buildah during a test case
+// setup
+type buildahConfig struct {
+	// The buildah binary to use. A custom binaryPath is required until
+	// buildah 1.44.0 is generally available.
+	binaryPath string
+	// The environment variables in the form KEY=VALUE to pass to buildah
+	// commands. Used for configuring buildah to use an isolated test container
+	// storage.
+	env []string
+}
+
+// testFixture contains a set of configuration and structs for executing a
+// single test case
+type testFixture struct {
+	// Store for operations required to setup tests (e.g. building images)
+	store storage.Store
+	// Scanner to be used in a test
+	scanner *Scanner
+	// Buildah configuration to use for a test case
+	bConfig buildahConfig
+}
+
+// newTestFixture gives buildah and the scanner the same private store for a case.
+func newTestFixture(t *testing.T, buildahBinary string, opts ...Option) *testFixture {
+	t.Helper()
+
+	store, configPath := createTestStorage(t)
+	return &testFixture{
+		store:   store,
+		scanner: createTestScanner(t, store, opts...),
+		bConfig: buildahConfig{
+			binaryPath: buildahBinary,
+			env: []string{
+				fmt.Sprintf("CONTAINERS_STORAGE_CONF=%s", configPath),
+				fmt.Sprintf("STORAGE_DRIVER=%s", "overlay"),
+			},
+		},
+	}
+}
+
+// createTestStorage creates a private overlay store for buildah and the scanner.
+func createTestStorage(t *testing.T) (storage.Store, string) {
+	t.Helper()
+
+	// A short path avoids punctuation from test names in fuse-overlayfs mounts.
+	storageDir, err := os.MkdirTemp("", "capo-store-")
+	if err != nil {
+		t.Fatalf("create test storage directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(storageDir); err != nil {
+			t.Errorf("remove test storage directory: %v", err)
+		}
+	})
+	const driver = "overlay"
+	configPath := filepath.Join(storageDir, "storage.conf")
+	graphRoot := filepath.Join(storageDir, "graph")
+	runRoot := filepath.Join(storageDir, "run")
+	conf := fmt.Sprintf("[storage]\ndriver = %q\ngraphroot = %q\nrunroot = %q\n",
+		driver, graphRoot, runRoot)
+	if err := os.WriteFile(configPath, []byte(conf), 0o600); err != nil {
+		t.Fatalf("write test storage config: %v", err)
+	}
+	store, err := storage.GetStore(storage.StoreOptions{
+		GraphRoot:       graphRoot,
+		RunRoot:         runRoot,
+		GraphDriverName: driver,
+	})
+	if err != nil {
+		t.Fatalf("open test storage: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := store.Shutdown(true); err != nil {
+			t.Errorf("shut down test storage: %v", err)
+		}
+	})
+	return store, configPath
+}
+
+// createTestScanner injects the same store used by buildah into the scanner.
+func createTestScanner(t *testing.T, store storage.Store, opts ...Option) *Scanner {
+	t.Helper()
+
+	scannerOpts := []Option{
+		withStore(store),
 		WithLogger(
 			slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		),
-		WithSelectCatalogers(
-			selectionRequest...
-		),
-	)
+	}
+	scanner, err := NewScanner(append(scannerOpts, opts...)...)
+	if err != nil {
+		t.Fatalf("create test scanner: %v", err)
+	}
+	return scanner
 }
 
 // splitFilesystemTransport splits a filesystem transport reference into the
@@ -133,8 +230,8 @@ type TestCase struct {
 	BuilderImages []BuildDefinition
 	// ExpectedResult is the expected scan output for comparison with capo output.
 	ExpectedResult PackageMetadata
-	// A syft cataloger selection request if any
-	SelectCatalogers []string
+	// Scanner options specific to this case, such as cataloger selection.
+	ScannerOptions []Option
 }
 
 // getBuildahBinary returns the path to buildah binary to use for tests.
@@ -150,30 +247,29 @@ func getBuildahBinary(t *testing.T) string {
 		t.Logf("Using system buildah")
 	}
 
-	version, err := sh.Output(binary, "--version")
+	version, err := exec.Command(binary, "--version").Output()
 	if err != nil {
 		t.Fatalf("Could not determine buildah version: %v", err)
 	}
-	t.Logf("Buildah version: %s", version)
+	t.Logf("Buildah version: %s", strings.TrimSpace(string(version)))
 
 	return binary
 }
 
-func (testCase *TestCase) build(store storage.Store, buildahBinary string) error {
+func (testCase *TestCase) build(fixture *testFixture) error {
 	for _, builderImage := range testCase.BuilderImages {
-		if err := builderImage.buildImage(store, buildahBinary, true); err != nil {
+		if err := builderImage.buildImage(fixture, true); err != nil {
 			return err
 		}
 	}
-	if err := testCase.TestImage.buildImage(store, buildahBinary, false); err != nil {
+	if err := testCase.TestImage.buildImage(fixture, false); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (testCase *TestCase) run(t *testing.T, scanner *Scanner, buildahBinary string) error {
-	defer testCase.cleanUp(t, scanner.store)
-	if err := testCase.build(scanner.store, buildahBinary); err != nil {
+func (testCase *TestCase) run(t *testing.T, fixture *testFixture) error {
+	if err := testCase.build(fixture); err != nil {
 		return err
 	}
 
@@ -187,7 +283,7 @@ func (testCase *TestCase) run(t *testing.T, scanner *Scanner, buildahBinary stri
 		return err
 	}
 
-	result, err := scanner.Scan(cf)
+	result, err := fixture.scanner.Scan(cf)
 	if err != nil {
 		return err
 	}
@@ -231,27 +327,26 @@ func (testCase *TestCase) run(t *testing.T, scanner *Scanner, buildahBinary stri
 //
 // When Tag uses a filesystem transport (e.g. "oci-archive:base.tar:latest"),
 // the image is built with a temporary tag, pushed to a local file/directory
-// inside the ContextDirectory using the original transport, and the temporary
-// image is removed from storage. This is needed because buildah requires
+// inside the ContextDirectory using the original transport. This is needed because buildah requires
 // filesystem transport paths to be relative to the build context.
-func (buildDef *BuildDefinition) buildImage(store storage.Store, buildahBinary string, isBuilder bool) (err error) {
+func (buildDef *BuildDefinition) buildImage(fixture *testFixture, isBuilder bool) (err error) {
 	tag := buildDef.Tag
 
 	if storageclient.IsFilesystemTransport(tag) {
-		return buildDef.buildFilesystemImage(store, buildahBinary)
+		return buildDef.buildFilesystemImage(fixture)
 	}
 
-	if _, err := store.Lookup(tag); err == nil && isBuilder {
+	if _, err := fixture.store.Lookup(tag); err == nil && isBuilder {
 		return nil
 	}
 
-	return buildDef.runBuildah(buildahBinary, tag, !isBuilder)
+	return buildDef.runBuildah(fixture.bConfig, tag, !isBuilder)
 }
 
 // buildFilesystemImage builds a temporary image from ContainerfileContent and
 // pushes it to a local file/directory inside ContextDirectory using the
 // transport from the Tag (e.g. "oci-archive:", "docker-archive:", "oci:", "dir:").
-func (buildDef *BuildDefinition) buildFilesystemImage(store storage.Store, buildahBinary string) error {
+func (buildDef *BuildDefinition) buildFilesystemImage(fixture *testFixture) error {
 	transport, rest := splitFilesystemTransport(buildDef.Tag)
 	localPath := filesystemTransportPath(buildDef.Tag)
 	fullPath := filepath.Join(buildDef.ContextDirectory, localPath)
@@ -261,47 +356,28 @@ func (buildDef *BuildDefinition) buildFilesystemImage(store storage.Store, build
 	}
 
 	tmpTag := "tmp-" + uuid.New().String()
-	if err := buildDef.runBuildah(buildahBinary, tmpTag, false); err != nil {
+	if err := buildDef.runBuildah(fixture.bConfig, tmpTag, false); err != nil {
 		return err
 	}
-	defer func() {
-		if id, err := store.Lookup(tmpTag); err == nil {
-			store.DeleteImage(id, true)
-		}
-	}()
 
 	pushDest := transport + fullPath
 	if ref := strings.TrimPrefix(rest, localPath); ref != "" {
 		pushDest += ref
 	}
-	return sh.RunV(buildahBinary, "push", tmpTag, pushDest)
+
+	cmd := exec.Command(fixture.bConfig.binaryPath, "push", tmpTag, pushDest)
+	cmd.Env = append(os.Environ(), fixture.bConfig.env...)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("buildah push failed: %w", err)
+	}
+	return nil
 }
 
-func (buildDef *BuildDefinition) runBuildah(buildahBinary, tag string, saveStages bool) (err error) {
-	// Create a temporary file for the Containerfile content
-	tmpFile, err := os.CreateTemp("", "Containerfile-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer func() {
-		closeErr := errors.Join(
-			tmpFile.Close(),
-			os.Remove(tmpFile.Name()),
-		)
-		if err == nil {
-			err = closeErr
-		}
-	}()
-
-	// Write the Containerfile content to the temporary file
-	if _, err := tmpFile.WriteString(buildDef.ContainerfileContent); err != nil {
-		return err
-	}
-
+func (buildDef *BuildDefinition) runBuildah(buildah buildahConfig, tag string, saveStages bool) (err error) {
 	args := []string{
 		"build",
 		"-f",
-		tmpFile.Name(),
+		"-",
 		"--tag",
 		tag,
 	}
@@ -316,10 +392,16 @@ func (buildDef *BuildDefinition) runBuildah(buildahBinary, tag string, saveStage
 
 	args = append(args, buildDef.ContextDirectory)
 
-	var buf bytes.Buffer
-	if _, err := sh.Exec(nil, &buf, &buf, buildahBinary, args...); err != nil {
-		return fmt.Errorf("buildah build failed:\n%s%w", buf.String(), err)
+	cmd := exec.Command(buildah.binaryPath, args...)
+	cmd.Stdin = strings.NewReader(buildDef.ContainerfileContent)
+	cmd.Env = append(os.Environ(), buildah.env...)
+	err_buf := bytes.NewBufferString("")
+	cmd.Stderr = err_buf
+
+	if err = cmd.Run(); err != nil {
+		return fmt.Errorf("buildah build failed: %w: %q", err, err_buf)
 	}
+
 	return nil
 }
 
@@ -343,16 +425,16 @@ func normalizePullspec(pullspec string) string {
 // reference, simulating how buildah stores images pulled from a registry by
 // digest.
 // Returns the digest-only reference (e.g. "localhost/name@sha256:...").
-func buildDigestOnlyImage(t *testing.T, def BuildDefinition, store storage.Store, buildahBinary string) string {
+func buildDigestOnlyImage(t *testing.T, def BuildDefinition, fixture *testFixture) string {
 	t.Helper()
-	if err := def.buildImage(store, buildahBinary, true); err != nil {
+	if err := def.buildImage(fixture, true); err != nil {
 		t.Fatalf("buildDigestOnlyImage: build failed: %v", err)
 	}
-	imgID, err := store.Lookup(def.Tag)
+	imgID, err := fixture.store.Lookup(def.Tag)
 	if err != nil {
 		t.Fatalf("buildDigestOnlyImage: lookup failed: %v", err)
 	}
-	img, err := store.Image(imgID)
+	img, err := fixture.store.Image(imgID)
 	if err != nil {
 		t.Fatalf("buildDigestOnlyImage: get image failed: %v", err)
 	}
@@ -363,60 +445,10 @@ func buildDigestOnlyImage(t *testing.T, def BuildDefinition, store storage.Store
 	}
 	digestRef := repo + "@" + img.Digest.String()
 	// Simulate buildah: images pulled with tag+digest are stored under digest-only name
-	if err := store.SetNames(imgID, []string{digestRef}); err != nil {
+	if err := fixture.store.SetNames(imgID, []string{digestRef}); err != nil {
 		t.Fatalf("buildDigestOnlyImage: SetNames failed: %v", err)
 	}
-	t.Cleanup(func() { def := BuildDefinition{Tag: digestRef}; def.cleanUp(t, store) })
 	return digestRef
-}
-
-// cleanUpIntermediateLayers deletes all images without names/tags from the store.
-// This technically cleans more than just intermediate layers, but it shouldn't matter.
-func cleanUpIntermediateLayers(t *testing.T, store storage.Store) error {
-	images, err := store.Images()
-	if err != nil {
-		return err
-	}
-	for _, image := range images {
-		if len(image.Names) == 0 {
-			store.DeleteImage(image.ID, true)
-		}
-	}
-	return nil
-}
-
-// cleanUpTestImage unmounts and deletes a test image by tag.
-// Returns nil if the image doesn't exist.
-func (testCase *TestCase) cleanUp(t *testing.T, store storage.Store) error {
-	for _, builderImage := range testCase.BuilderImages {
-		builderImage.cleanUp(t, store)
-	}
-	testCase.TestImage.cleanUp(t, store)
-	cleanUpIntermediateLayers(t, store)
-	return nil
-}
-
-func (buildDef *BuildDefinition) cleanUp(t *testing.T, store storage.Store) error {
-	if storageclient.IsFilesystemTransport(buildDef.Tag) {
-		localPath := filesystemTransportPath(buildDef.Tag)
-		fullPath := filepath.Join(buildDef.ContextDirectory, localPath)
-		os.RemoveAll(fullPath)
-		return nil
-	}
-	imageID, err := store.Lookup(buildDef.Tag)
-	if err != nil {
-		t.Logf("Image %s not found, skipping cleanup: %v", buildDef.Tag, err)
-		return nil
-	}
-	_, err = store.UnmountImage(imageID, true)
-	if err != nil {
-		t.Logf("Failed to unmount image %s: %v", buildDef.Tag, err)
-	}
-	_, err = store.DeleteImage(imageID, true)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 // normalizeTag normalizes a container image tag by:
@@ -456,32 +488,32 @@ func normalizeTestCaseTags(testCase *TestCase) {
 // Builder struct used to efficiently construct expected package metadata items
 // for test cases
 type pkgMetaItemBuilder struct {
-	inner []PackageMetadataItem
-	pullspec string
+	inner      []PackageMetadataItem
+	pullspec   string
 	originType string
 	stageAlias string
 }
 
 // Set the expected origin type for all inner package metadata items
-func (b *pkgMetaItemBuilder) ExpectedOriginType(ot string) *pkgMetaItemBuilder {
+func (b pkgMetaItemBuilder) ExpectedOriginType(ot string) pkgMetaItemBuilder {
 	b.originType = ot
 	return b
 }
 
 // Set the expected pullspec for all inner package metadata items
-func (b *pkgMetaItemBuilder) ExpectedPullspec(pullspec string) *pkgMetaItemBuilder {
+func (b pkgMetaItemBuilder) ExpectedPullspec(pullspec string) pkgMetaItemBuilder {
 	b.pullspec = pullspec
 	return b
 }
 
 // Set the expected stage alias for all inner package metadata items
-func (b *pkgMetaItemBuilder) ExpectedStageAlias(alias string) *pkgMetaItemBuilder {
+func (b pkgMetaItemBuilder) ExpectedStageAlias(alias string) pkgMetaItemBuilder {
 	b.stageAlias = alias
 	return b
 }
 
 // Build the expected package metadata items.
-func (b *pkgMetaItemBuilder) Build() []PackageMetadataItem {
+func (b pkgMetaItemBuilder) Build() []PackageMetadataItem {
 	items := make([]PackageMetadataItem, len(b.inner))
 	copy(items, b.inner)
 
@@ -495,12 +527,12 @@ func (b *pkgMetaItemBuilder) Build() []PackageMetadataItem {
 }
 
 var syfterBuilder = pkgMetaItemBuilder{
-	inner: []PackageMetadataItem {
+	inner: []PackageMetadataItem{
 		{
 			PackageURL:       "pkg:golang/github.com/anchore/syft@v1.32.0",
 			DependencyOfPURL: "pkg:golang/syfter@v1.0.0",
-        },
-        {
+		},
+		{
 			PackageURL:       "pkg:golang/github.com/facebookincubator/nvdtools@v0.1.5",
 			DependencyOfPURL: "pkg:golang/syfter@v1.0.0",
 		},
@@ -511,7 +543,7 @@ var syfterBuilder = pkgMetaItemBuilder{
 		{
 			PackageURL: "pkg:golang/syfter@v1.0.0",
 		},
-    },
+	},
 }
 
 var texterBuilder = pkgMetaItemBuilder{
@@ -1807,40 +1839,6 @@ func TestIntegration(t *testing.T) {
 					Build(),
 			},
 		},
-		// All content from oci-archive is treated as intermediate content,
-		// even if it is from a builder stage. That is because all oci-archive
-		// bases are local and unpullable.
-		"[FROM special] FROM oci-archive as builder base": {
-			TestImage: BuildDefinition{
-				Tag: "test-from-oci-archive-builder",
-				ContainerfileContent: `FROM oci-archive:test-base.ociarchive AS builder
-										COPY uuider /content/uuider
-
-										FROM scratch
-										COPY --from=builder /content /content
-										COPY --from=builder /opt /opt`,
-				ContextDirectory: "../testdata/image_content",
-			},
-			BuilderImages: []BuildDefinition{
-				{
-					Tag: "oci-archive:test-base.ociarchive",
-					ContainerfileContent: `FROM scratch
-											COPY go2 /tmp/dummy
-											COPY syfter /opt/syfter`,
-					ContextDirectory: "../testdata/image_content",
-				},
-			},
-			ExpectedResult: PackageMetadata{
-				Packages: slices.Concat(
-					uuiderBuilder.ExpectedPullspec("oci-archive:test-base.ociarchive").
-						ExpectedOriginType("intermediate").
-						ExpectedStageAlias("builder").Build(),
-					syfterBuilder.ExpectedPullspec("oci-archive:test-base.ociarchive").
-						ExpectedOriginType("intermediate").
-						ExpectedStageAlias("builder").Build(),
-				),
-			},
-		},
 		"[FROM special] FROM docker:// transport as builder base": {
 			TestImage: BuildDefinition{
 				Tag: "test-from-docker-transport",
@@ -1998,7 +1996,7 @@ func TestIntegration(t *testing.T) {
 					ContextDirectory: "../testdata/image_content",
 				},
 			},
-			SelectCatalogers: []string{"-go"},
+			ScannerOptions: []Option{WithSelectCatalogers("-go")},
 			ExpectedResult: PackageMetadata{
 				Packages: []PackageMetadataItem{},
 			},
@@ -2008,17 +2006,14 @@ func TestIntegration(t *testing.T) {
 	buildahBinary := getBuildahBinary(t)
 
 	for name, tc := range testCases {
-		scanner, err := createTestScanner(tc.SelectCatalogers)
-		if err != nil {
-			t.Fatalf("Failed to create scanner: %+v", err)
-		}
-
 		t.Run(name, func(t *testing.T) {
 			if tc.SkipTestReason != "" {
 				t.Skip(tc.SkipTestReason)
 			}
+			t.Parallel()
+			fixture := newTestFixture(t, buildahBinary, tc.ScannerOptions...)
 			normalizeTestCaseTags(&tc)
-			if err := tc.run(t, scanner, buildahBinary); err != nil {
+			if err := tc.run(t, fixture); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -2026,22 +2021,72 @@ func TestIntegration(t *testing.T) {
 
 }
 
+// TestIntegrationOCIArchive verifies that content from a local archive base is
+// attributed to the intermediate stage rather than to a pullable builder base.
+func TestIntegrationOCIArchive(t *testing.T) {
+	t.Parallel()
+
+	const contextDir = "../testdata/image_content"
+	archiveRef := "oci-archive:test-base-" + uuid.NewString() + ".ociarchive"
+	fixture := newTestFixture(t, getBuildahBinary(t))
+	t.Cleanup(func() {
+		archivePath := filepath.Join(contextDir, filesystemTransportPath(archiveRef))
+		if err := os.Remove(archivePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("remove test OCI archive: %v", err)
+		}
+	})
+
+	tc := TestCase{
+		TestImage: BuildDefinition{
+			Tag: "test-from-oci-archive-builder",
+			ContainerfileContent: fmt.Sprintf(`FROM %s AS builder
+										COPY uuider /content/uuider
+
+										FROM scratch
+										COPY --from=builder /content /content
+										COPY --from=builder /opt /opt`, archiveRef),
+			ContextDirectory: contextDir,
+		},
+		BuilderImages: []BuildDefinition{
+			{
+				Tag: archiveRef,
+				ContainerfileContent: `FROM scratch
+											COPY go2 /tmp/dummy
+											COPY syfter /opt/syfter`,
+				ContextDirectory: contextDir,
+			},
+		},
+		ExpectedResult: PackageMetadata{
+			Packages: slices.Concat(
+				uuiderBuilder.ExpectedPullspec(archiveRef).
+					ExpectedOriginType("intermediate").
+					ExpectedStageAlias("builder").Build(),
+				syfterBuilder.ExpectedPullspec(archiveRef).
+					ExpectedOriginType("intermediate").
+					ExpectedStageAlias("builder").Build(),
+			),
+		},
+	}
+	normalizeTestCaseTags(&tc)
+	if err := tc.run(t, fixture); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestIntegrationDigestLookup verifies that capo can resolve and scan builder
 // images stored under digest-only names (as buildah does after pulling with a
 // tag+digest ref).
 func TestIntegrationDigestLookup(t *testing.T) {
-	scanner, err := createTestScanner([]string{})
-	if err != nil {
-		t.Fatalf("Failed to create scanner: %+v", err)
-	}
 	buildahBinary := getBuildahBinary(t)
 
 	t.Run("Builder base image referenced by digest only", func(t *testing.T) {
+		t.Parallel()
+		fixture := newTestFixture(t, buildahBinary)
 		digestRef := buildDigestOnlyImage(t, BuildDefinition{
 			Tag:                  "localhost/capo-digest-test-builder:latest",
 			ContainerfileContent: "FROM scratch\nCOPY syfter /opt/syfter",
 			ContextDirectory:     "../testdata/image_content",
-		}, scanner.store, buildahBinary)
+		}, fixture)
 
 		tc := TestCase{
 			TestImage: BuildDefinition{
@@ -2058,18 +2103,20 @@ COPY --from=builder /opt/syfter /opt/syfter`, digestRef),
 			},
 		}
 		normalizeTestCaseTags(&tc)
-		if err := tc.run(t, scanner, buildahBinary); err != nil {
+		if err := tc.run(t, fixture); err != nil {
 			t.Fatal(err)
 		}
 	})
 
 	t.Run("Builder base image referenced by tag+digest", func(t *testing.T) {
+		t.Parallel()
+		fixture := newTestFixture(t, buildahBinary)
 		builderTag := "localhost/capo-tagdigest-test-builder:v1"
 		digestRef := buildDigestOnlyImage(t, BuildDefinition{
 			Tag:                  builderTag,
 			ContainerfileContent: "FROM scratch\nCOPY syfter /opt/syfter",
 			ContextDirectory:     "../testdata/image_content",
-		}, scanner.store, buildahBinary)
+		}, fixture)
 
 		// Reconstruct the tag+digest pullspec from the stored digest-only ref.
 		_, digestSuffix, _ := strings.Cut(digestRef, "@")
@@ -2090,18 +2137,20 @@ COPY --from=builder /opt/syfter /opt/syfter`, tagDigestRef),
 			},
 		}
 		normalizeTestCaseTags(&tc)
-		if err := tc.run(t, scanner, buildahBinary); err != nil {
+		if err := tc.run(t, fixture); err != nil {
 			t.Fatal(err)
 		}
 	})
 
 	t.Run("Builder base image referenced by tag+digest with port", func(t *testing.T) {
+		t.Parallel()
+		fixture := newTestFixture(t, buildahBinary)
 		builderTag := "localhost:5000/capo-port-test-builder:v1"
 		digestRef := buildDigestOnlyImage(t, BuildDefinition{
 			Tag:                  builderTag,
 			ContainerfileContent: "FROM scratch\nCOPY syfter /opt/syfter",
 			ContextDirectory:     "../testdata/image_content",
-		}, scanner.store, buildahBinary)
+		}, fixture)
 
 		_, digestSuffix, _ := strings.Cut(digestRef, "@")
 		tagDigestRef := builderTag + "@" + digestSuffix
@@ -2121,7 +2170,7 @@ COPY --from=builder /opt/syfter /opt/syfter`, tagDigestRef),
 			},
 		}
 		normalizeTestCaseTags(&tc)
-		if err := tc.run(t, scanner, buildahBinary); err != nil {
+		if err := tc.run(t, fixture); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -2142,19 +2191,16 @@ func TestIntegrationScanErrors(t *testing.T) {
 		},
 	}
 
-	scanner, err := createTestScanner([]string{})
-	if err != nil {
-		t.Fatalf("Failed to create scanner: %+v", err)
-	}
-
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fixture := newTestFixture(t, "")
 			cf, err := containerfile.Parse(strings.NewReader(tc.ContainerfileContent), containerfile.BuildOptions{})
 			if err != nil {
 				t.Fatalf("Failed to parse containerfile: %v", err)
 			}
 
-			_, err = scanner.Scan(cf)
+			_, err = fixture.scanner.Scan(cf)
 			if !errors.Is(err, tc.ExpectedError) {
 				t.Fatalf("expected %v, got: %v", tc.ExpectedError, err)
 			}

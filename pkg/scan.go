@@ -130,29 +130,30 @@ func WithDefaultCatalogersTag(tag string) Option {
 // Create a new Scanner with the specified options or fail if an error occurred
 // while trying to set up the containers/storage store.
 func NewScanner(opts ...Option) (*Scanner, error) {
-	// Tech debt: Scanner uses both the storageclient (for
-	// resolving pullspecs and fetching OCIImageConfigs) that uses
-	// storage.Store internally and the raw storage.Store struct. This was
-	// done for ease of testing some features via a mock client. Ideally we
-	// would only have the storageclient implementation, so we had full control
-	// over unit testing.
-	store, err := setupStore()
-	if err != nil {
-		return nil, err
-	}
-
-	sclient := storageclient.NewBuildahClient(store)
-
 	s := &Scanner{
-		logger:  slog.Default(),
-		sclient: sclient,
-		store:   store,
+		logger:           slog.Default(),
 		selectCatalogers: []string{},
 	}
 
 	for _, o := range opts {
 		o(s)
 	}
+
+	if s.store == nil {
+		store, err := setupStore()
+		if err != nil {
+			return nil, err
+		}
+		s.store = store
+	}
+
+	// Tech debt: Scanner uses both the storageclient (for
+	// resolving pullspecs and fetching OCIImageConfigs) that uses
+	// storage.Store internally and the raw storage.Store struct. This was
+	// done for ease of testing some features via a mock client. Ideally we
+	// would only have the storageclient implementation, so we had full control
+	// over unit testing.
+	s.sclient = storageclient.NewBuildahClient(s.store)
 
 	if s.defaultCatalogersTag == "" {
 		s.defaultCatalogersTag = pkgcataloging.ImageTag
