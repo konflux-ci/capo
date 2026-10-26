@@ -99,6 +99,7 @@ func IntegrationTest() error {
 		"test",
 		"-v",
 		"-count=1", // disable test caching
+		"-parallel=4", // limit concurrent image builds and scans
 		"-tags=integration,exclude_graphdriver_btrfs",
 		"./pkg",
 	)
@@ -112,6 +113,7 @@ func IntegrationCoverage() error {
 		"go",
 		"test",
 		"-count=1",
+		"-parallel=4",
 		"-coverprofile=coverage-integration.out",
 		"-coverpkg=./...",
 		"-covermode=atomic",
