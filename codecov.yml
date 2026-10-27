@@ -17,6 +17,7 @@ ignore:
   - "testdata/**"
   - "docs/**"
   - "internal/testutils/**"
+  - "pkg/integration_test.go"
 
 flags:
   unit-tests:
