@@ -3,7 +3,6 @@
 package capo
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -367,13 +366,13 @@ func (buildDef *BuildDefinition) buildFilesystemImage(fixture *testFixture) erro
 
 	cmd := exec.Command(fixture.bConfig.binaryPath, "push", tmpTag, pushDest)
 	cmd.Env = append(os.Environ(), fixture.bConfig.env...)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("buildah push failed: %w", err)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("buildah push failed: %w\n%s", err, out)
 	}
 	return nil
 }
 
-func (buildDef *BuildDefinition) runBuildah(buildah buildahConfig, tag string, saveStages bool) (err error) {
+func (buildDef *BuildDefinition) runBuildah(buildah buildahConfig, tag string, saveStages bool) error {
 	args := []string{
 		"build",
 		"-f",
@@ -395,11 +394,8 @@ func (buildDef *BuildDefinition) runBuildah(buildah buildahConfig, tag string, s
 	cmd := exec.Command(buildah.binaryPath, args...)
 	cmd.Stdin = strings.NewReader(buildDef.ContainerfileContent)
 	cmd.Env = append(os.Environ(), buildah.env...)
-	err_buf := bytes.NewBufferString("")
-	cmd.Stderr = err_buf
-
-	if err = cmd.Run(); err != nil {
-		return fmt.Errorf("buildah build failed: %w: %q", err, err_buf)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("buildah build failed:\n%s%w", output, err)
 	}
 
 	return nil
