@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -192,66 +193,150 @@ func (s *Scanner) getImageContent(
 		}
 	}()
 
-	for _, src := range sources {
-		full := path.Join(mountPath, src)
-		matches, err := filepath.Glob(full)
-		if err != nil {
-			return included, fmt.Errorf("failed to glob pattern %q: %w: %w", src, err, ErrIO)
-		}
+	included, err = copyImageContent(mountPath, contentPath, sources)
+	return included, err
+}
 
-		if len(matches) == 0 {
-			continue
+// copyImageContent copies paths matching sources from the mounted image at
+// mountPath into contentPath. All source traversal and destination writes go
+// through os.Root so symlinks in the untrusted image cannot escape either
+// directory.
+func copyImageContent(mountPath, contentPath string, sources []string) (included []string, err error) {
+	mountRoot, err := os.OpenRoot(mountPath)
+	if err != nil {
+		return included, fmt.Errorf("failed to open mounted image %q: %w: %w", mountPath, err, ErrIO)
+	}
+	defer func() {
+		if closeErr := mountRoot.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to close mounted image %q: %w: %w", mountPath, closeErr, ErrIO))
+		}
+	}()
+
+	contentRoot, err := os.OpenRoot(contentPath)
+	if err != nil {
+		return included, fmt.Errorf("failed to open content directory %q: %w: %w", contentPath, err, ErrIO)
+	}
+	defer func() {
+		if closeErr := contentRoot.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to close content directory %q: %w: %w", contentPath, closeErr, ErrIO))
+		}
+	}()
+
+	for _, src := range sources {
+		matches, err := imageSourceMatches(mountRoot, src)
+		if err != nil {
+			return included, err
 		}
 
 		for _, match := range matches {
-			fInfo, err := os.Stat(match)
-			if err != nil {
-				return included, fmt.Errorf("failed to stat %q: %w: %w", match, err, ErrIO)
+			if err := copyImageMatch(mountRoot, contentRoot, contentPath, match); err != nil {
+				return included, err
 			}
-
-			relPath, err := filepath.Rel(mountPath, match)
-			if err != nil {
-				return included, fmt.Errorf("failed to get relative path for %q: %w: %w", match, err, ErrIO)
-			}
-			dest := path.Join(contentPath, relPath)
-
-			if fInfo.IsDir() {
-				// CopyFS also copies and follows symlinks even if they're outside the specified source,
-				// This is not a problem for us because Syft ignores symbolic links.
-				if err := os.CopyFS(dest, os.DirFS(match)); err != nil {
-					return included, fmt.Errorf("failed to copy directory %q to %q: %w: %w", match, dest, err, ErrIO)
-				}
-			} else if fInfo.Mode().IsRegular() {
-				if err := copyFile(match, dest); err != nil {
-					return included, err
-				}
-			}
-
-			included = append(included, "/"+relPath)
+			included = append(included, "/"+match)
 		}
 	}
 
 	return included, err
 }
 
-func copyFile(src string, dest string) (err error) {
-	reader, err := os.Open(src)
+// imageSourceMatches globs a Containerfile source path inside the image root.
+// fs.Glob cannot traverse an escaping symlink, unlike filepath.Glob on a host
+// path.
+func imageSourceMatches(mountRoot *os.Root, src string) ([]string, error) {
+	pattern := strings.TrimPrefix(path.Clean(src), "/")
+	if pattern == "" {
+		pattern = "."
+	}
+	matches, err := fs.Glob(mountRoot.FS(), pattern)
 	if err != nil {
-		return fmt.Errorf("failed to open file %q: %w: %w", src, err, ErrIO)
+		return nil, fmt.Errorf("failed to glob pattern %q: %w: %w", src, err, ErrIO)
+	}
+	return matches, nil
+}
+
+func copyImageMatch(mountRoot, contentRoot *os.Root, contentPath, match string) error {
+	fInfo, err := mountRoot.Stat(match)
+	if err != nil {
+		return fmt.Errorf("failed to stat %q in mounted image: %w: %w", match, err, ErrIO)
+	}
+
+	dest := filepath.Join(contentPath, filepath.FromSlash(match))
+	if dest != contentPath && !strings.HasPrefix(dest, contentPath+string(filepath.Separator)) {
+		return fmt.Errorf("refusing to copy %q outside content path %q: %w", match, contentPath, ErrIO)
+	}
+
+	if fInfo.IsDir() {
+		return copyImageDir(contentRoot, filepath.FromSlash(match), mountRoot.FS(), match)
+	}
+	if fInfo.Mode().IsRegular() {
+		return copyImageFile(contentRoot, filepath.FromSlash(match), mountRoot.FS(), match)
+	}
+	return nil
+}
+
+// copyImageDir copies a directory tree into dstRoot. Symlinks and other
+// non-regular entries are skipped because Syft ignores them and copying them
+// could later turn a rooted destination write into an escaping one.
+func copyImageDir(dstRoot *os.Root, dst string, src fs.FS, srcRoot string) error {
+	if srcRoot != "." {
+		if err := dstRoot.MkdirAll(dst, 0o755); err != nil {
+			return fmt.Errorf("failed to create directory %q: %w: %w", dst, err, ErrIO)
+		}
+	}
+
+	walkErr := fs.WalkDir(src, srcRoot, func(p string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("failed to walk %q: %w: %w", p, walkErr, ErrIO)
+		}
+		if p == srcRoot {
+			return nil
+		}
+
+		target := filepath.FromSlash(p)
+		if d.IsDir() {
+			if err := dstRoot.MkdirAll(target, 0o755); err != nil {
+				return fmt.Errorf("failed to create directory %q: %w: %w", target, err, ErrIO)
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			return nil
+		}
+		if err := dstRoot.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return fmt.Errorf("failed to create directory %q: %w: %w", filepath.Dir(target), err, ErrIO)
+		}
+		return copyImageFile(dstRoot, target, src, p)
+	})
+	if walkErr != nil {
+		return fmt.Errorf("failed to copy directory %q: %w: %w", srcRoot, walkErr, ErrIO)
+	}
+	return nil
+}
+
+func copyImageFile(dstRoot *os.Root, dst string, src fs.FS, srcName string) (err error) {
+	reader, err := src.Open(srcName)
+	if err != nil {
+		return fmt.Errorf("failed to open file %q: %w: %w", srcName, err, ErrIO)
 	}
 	defer func() {
-		err = reader.Close()
+		if closeErr := reader.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to close file %q: %w: %w", srcName, closeErr, ErrIO))
+		}
 	}()
 
-	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
-		return fmt.Errorf("failed to create directory %q: %w: %w", filepath.Dir(dest), err, ErrIO)
+	if parent := filepath.Dir(dst); parent != "." {
+		if err := dstRoot.MkdirAll(parent, 0o755); err != nil {
+			return fmt.Errorf("failed to create directory %q: %w: %w", parent, err, ErrIO)
+		}
 	}
-	writer, err := os.Create(dest)
+	writer, err := dstRoot.Create(dst)
 	if err != nil {
-		return fmt.Errorf("failed to create file %q: %w: %w", dest, err, ErrIO)
+		return fmt.Errorf("failed to create file %q: %w: %w", dst, err, ErrIO)
 	}
 	defer func() {
-		err = writer.Close()
+		if closeErr := writer.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to close file %q: %w: %w", dst, closeErr, ErrIO))
+		}
 	}()
 
 	if _, err = io.Copy(writer, reader); err != nil {
@@ -405,7 +490,7 @@ func (s *Scanner) findIntermediateImage(
 		if err := checkBuildahVersionFromImage(cfg.Config.Labels); err != nil {
 			s.logger.Warn(
 				"intermediate image built by old version of buildah; ensure buildah 1.44.0 and higher is used  " +
-				"and consider using a clean image storage to avoid interference from previous builds",
+					"and consider using a clean image storage to avoid interference from previous builds",
 				"imageID", images[i].ID,
 			)
 			continue
@@ -481,5 +566,3 @@ func dirSize(path string) (int64, error) {
 	}
 	return size, nil
 }
-
-
