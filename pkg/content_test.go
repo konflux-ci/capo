@@ -4,8 +4,26 @@ package capo
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
+
+	"go.podman.io/storage"
 )
+
+type fakeImageStore struct {
+	storage.Store
+	mountPath string
+}
+
+func (f fakeImageStore) MountImage(_ string, _ []string, _ string) (string, error) {
+	return f.mountPath, nil
+}
+
+func (f fakeImageStore) UnmountImage(_ string, _ bool) (bool, error) {
+	return false, nil
+}
 
 func TestIncludes(t *testing.T) {
 	t.Parallel()
@@ -283,5 +301,128 @@ func TestCheckBuildahVersionFromImage(t *testing.T) {
 				t.Errorf("expected ErrUnsupportedBuildahVersion but got: %v", err)
 			}
 		})
+	}
+}
+
+func TestGetImageContentRejectsEscapingSymlink(t *testing.T) {
+	t.Parallel()
+
+	outsidePath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outsidePath, "secret.txt"), []byte("host secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mountPath := t.TempDir()
+	contentPath := t.TempDir()
+	if err := os.Symlink(outsidePath, filepath.Join(mountPath, "pkgs")); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := &Scanner{store: fakeImageStore{mountPath: mountPath}}
+	_, err := scanner.getImageContent(&storage.Image{ID: "image"}, []string{"/*"}, contentPath)
+	if err == nil {
+		t.Fatal("expected an error for a symlink escaping the mounted image")
+	}
+	if !errors.Is(err, ErrIO) {
+		t.Fatalf("expected ErrIO, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(contentPath, "pkgs", "secret.txt")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("host file was copied through escaping symlink: %v", statErr)
+	}
+}
+
+func TestGetImageContentDoesNotFollowEscapingSymlinkForExactSource(t *testing.T) {
+	t.Parallel()
+
+	outsidePath := t.TempDir()
+	secretPath := filepath.Join(outsidePath, "secret.txt")
+	if err := os.WriteFile(secretPath, []byte("host secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mountPath := t.TempDir()
+	contentPath := t.TempDir()
+	if err := os.Symlink(secretPath, filepath.Join(mountPath, "secret.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := &Scanner{store: fakeImageStore{mountPath: mountPath}}
+	included, err := scanner.getImageContent(&storage.Image{ID: "image"}, []string{"/secret.txt"}, contentPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(included) != 0 {
+		t.Fatalf("expected no included content, got %v", included)
+	}
+	if _, statErr := os.Stat(filepath.Join(contentPath, "secret.txt")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("host file was copied through escaping symlink: %v", statErr)
+	}
+}
+
+func TestGetImageContentSkipsNestedSymlinks(t *testing.T) {
+	t.Parallel()
+
+	outsidePath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outsidePath, "secret.txt"), []byte("host secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mountPath := t.TempDir()
+	contentPath := t.TempDir()
+	dataPath := filepath.Join(mountPath, "data")
+	if err := os.MkdirAll(dataPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataPath, "regular.txt"), []byte("image content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outsidePath, "secret.txt"), filepath.Join(dataPath, "secret.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := &Scanner{store: fakeImageStore{mountPath: mountPath}}
+	included, err := scanner.getImageContent(&storage.Image{ID: "image"}, []string{"/data"}, contentPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !slices.Equal(included, []string{"/data"}) {
+		t.Fatalf("included = %v, want [/data]", included)
+	}
+	copied, err := os.ReadFile(filepath.Join(contentPath, "data", "regular.txt"))
+	if err != nil {
+		t.Fatalf("regular image content was not copied: %v", err)
+	}
+	if string(copied) != "image content" {
+		t.Fatalf("regular content = %q, want %q", copied, "image content")
+	}
+	if _, statErr := os.Lstat(filepath.Join(contentPath, "data", "secret.txt")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("nested symlink was copied into content: %v", statErr)
+	}
+}
+
+func TestGetImageContentCopiesSingleFile(t *testing.T) {
+	t.Parallel()
+
+	mountPath := t.TempDir()
+	contentPath := t.TempDir()
+	optPath := filepath.Join(mountPath, "opt")
+	if err := os.MkdirAll(optPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(optPath, "syfter"), []byte("image content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner := &Scanner{store: fakeImageStore{mountPath: mountPath}}
+	included, err := scanner.getImageContent(&storage.Image{ID: "image"}, []string{"/opt/syfter"}, contentPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !slices.Equal(included, []string{"/opt/syfter"}) {
+		t.Fatalf("included = %v, want [/opt/syfter]", included)
+	}
+	copied, err := os.ReadFile(filepath.Join(contentPath, "opt", "syfter"))
+	if err != nil {
+		t.Fatalf("single-file image content was not copied: %v", err)
+	}
+	if string(copied) != "image content" {
+		t.Fatalf("copied content = %q, want %q", copied, "image content")
 	}
 }
